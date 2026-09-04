@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -eu
+
+if [[ "${1:-}" == "memory" ]]; then
+    exec /usr/sbin/dmidecode -t memory
+fi
+
+device="${1:-}"
+if [[ ! "$device" =~ ^[[:alnum:]._-]+$ ]] || [[ ! -b "/dev/$device" ]]; then
+    echo "Ungültiges Blockgerät" >&2
+    exit 2
+fi
+
+for smartctl in /usr/sbin/smartctl /usr/bin/smartctl; do
+    if [[ -x "$smartctl" ]]; then
+        exec "$smartctl" --all --json=o "/dev/$device"
+    fi
+done
+
+echo "smartctl ist nicht installiert" >&2
+exit 127
