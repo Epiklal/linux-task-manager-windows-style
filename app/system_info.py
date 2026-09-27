@@ -6,7 +6,9 @@ from __future__ import annotations
 import glob
 import json
 import os
+import platform
 import re
+import shlex
 import shutil
 import socket
 import subprocess
@@ -26,6 +28,55 @@ _GPU_ENGINE_LABELS = {
     "gfx": "3D", "compute": "Compute", "sdma": "Kopieren", "dma": "Kopieren",
     "enc": "Video-Encode", "dec": "Video-Decode", "jpeg": "JPEG",
 }
+
+
+def _pcie_link_info(current_speed: str, current_width: str,
+                    max_speed: str, max_width: str) -> dict:
+    """Normalize PCIe link values and calculate theoretical link capacity."""
+    speed_re = re.compile(r"([0-9]+(?:\.[0-9]+)?)\s*GT/s", re.IGNORECASE)
+
+    def parse_speed(value: str) -> float | None:
+        match = speed_re.search(value)
+        return float(match.group(1)) if match else None
+
+    def parse_width(value: str) -> int | None:
+        match = re.search(r"\d+", value)
+        return int(match.group()) if match else None
+
+    current_gt = parse_speed(current_speed)
+    max_gt = parse_speed(max_speed)
+    current_lanes = parse_width(current_width)
+    max_lanes = parse_width(max_width)
+    effective_gt = current_gt or max_gt
+    effective_lanes = current_lanes or max_lanes
+    bandwidth_gb_s = None
+    if effective_gt is not None and effective_lanes is not None:
+        efficiency = 0.8 if effective_gt <= 5 else 128 / 130
+        bandwidth_gb_s = effective_gt * efficiency * effective_lanes / 8
+    return {
+        "generation": _pcie_generation(effective_gt),
+        "current_speed_gt_s": current_gt,
+        "current_width": current_lanes,
+        "max_speed_gt_s": max_gt,
+        "max_generation": _pcie_generation(max_gt),
+        "max_width": max_lanes,
+        "bandwidth_gb_s": bandwidth_gb_s,
+    }
+
+
+def _pcie_generation(speed_gt_s: float | None) -> str | None:
+    generations = {2.5: "1", 5.0: "2", 8.0: "3", 16.0: "4", 32.0: "5", 64.0: "6"}
+    if speed_gt_s is None:
+        return None
+    closest = min(generations, key=lambda speed: abs(speed - speed_gt_s))
+    return f"Gen {generations[closest]}"
+
+
+def _nvidia_rate_mb_s(value: str) -> float | None:
+    match = re.search(r"([0-9]+(?:\.[0-9]+)?)", value)
+    return float(match.group(1)) if match else None
+
+
 GPU_ENGINE_METRICS = ["3D", "Compute", "Kopieren", "Video-Encode", "Video-Decode",
                       "JPEG", "Speicher-Controller"]
 
@@ -178,6 +229,52 @@ class GpuMonitor:
         return result
 
 
+def _pci_location_text(address: str) -> str:
+    """'0000:2d:00.0' -> 'PCI-Bus 45, Gerät 0, Funktion 0' (as Windows words it)."""
+    match = re.search(r"([0-9a-fA-F]+):([0-9a-fA-F]+)\.([0-7])$", address.strip())
+    if not match:
+        return address
+    bus, device, function = (int(part, 16) for part in match.groups())
+    return f"PCI-Bus {bus}, Gerät {device}, Funktion {function}"
+
+
+_GPU_VENDORS = {"Advanced Micro Devices": "AMD", "NVIDIA": "NVIDIA", "Intel": "Intel"}
+
+
+def _lspci_gpu_name(slot: str) -> str | None:
+    """Marketing name such as 'AMD Radeon RX 7900 XTX' from `lspci -mm`.
+
+    lspci lists a device family ('Radeon RX 7900 XT/7900 XTX/7900 GRE/7900M');
+    the board's subsystem name usually tells which variant it is.
+    """
+    try:
+        out = subprocess.check_output(["lspci", "-mm", "-s", slot], text=True, timeout=2,
+                                      stderr=subprocess.DEVNULL)
+        fields = shlex.split(out.strip())
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError, ValueError):
+        return None
+    positional = [f for f in fields if not f.startswith("-")]
+    if len(positional) < 4:
+        return None
+    vendor_text, device_text = positional[2], positional[3]
+    subsystem = positional[5] if len(positional) > 5 else ""
+    vendor = next((short for key, short in _GPU_VENDORS.items() if key in vendor_text), "")
+    bracket = re.search(r"\[([^\]]+)\]\s*$", device_text)
+    family = bracket.group(1) if bracket else device_text
+    variants = family.split("/")
+    model = variants[0]
+    if len(variants) > 1:
+        # 'Radeon RX 7900 XT' + '7900 XTX' -> prefix 'Radeon RX', candidates per variant.
+        tokens = variants[0].split()
+        alt_len = len(variants[1].split())
+        prefix = " ".join(tokens[:-alt_len]) if len(tokens) > alt_len else ""
+        suffixes = [" ".join(tokens[-alt_len:]), *variants[1:]]
+        matching = [v for v in suffixes if re.search(rf"\b{re.escape(v)}\b", subsystem)]
+        if matching:
+            model = f"{prefix} {max(matching, key=len)}".strip()
+    return f"{vendor} {model}".strip()
+
+
 class GpuSystemMonitor:
     """Best-effort overall (not per-process) GPU stats: utilization/VRAM/temp/power.
 
@@ -191,6 +288,9 @@ class GpuSystemMonitor:
         self._card_path = None if self._nvidia else self._find_card()
         self._prev_engine_busy: dict[str, int] = {}
         self._prev_engine_time: float | None = None
+        # Name / driver / PCI location never change, so they are read only once.
+        self._static_info = (self._nvidia_static_info() if self._nvidia
+                             else self._sysfs_static_info() if self._card_path else {})
 
     def available(self) -> bool:
         return bool(self._nvidia or self._card_path)
@@ -198,28 +298,103 @@ class GpuSystemMonitor:
     @staticmethod
     def _find_card() -> str | None:
         base = "/sys/class/drm"
+        candidates = []
         try:
             for name in sorted(os.listdir(base)):
                 if not re.match(r"^card\d+$", name):
                     continue
                 device = f"{base}/{name}/device"
-                if os.path.exists(f"{device}/gpu_busy_percent"):
-                    return device
+                if not os.path.exists(f"{device}/uevent"):
+                    continue
+                boot_vga = _read_sysfs_str(f"{device}/boot_vga") == "1"
+                has_vram = os.path.exists(f"{device}/mem_info_vram_total")
+                has_busy = os.path.exists(f"{device}/gpu_busy_percent")
+                vendor = _read_sysfs_str(f"{device}/vendor") or ""
+                score = (not boot_vga, has_vram, has_busy, vendor == "0x10de")
+                candidates.append((score, device))
         except OSError:
             pass
-        return None
+        return max(candidates, default=((False, False, False, False), None))[1]
 
     def poll(self) -> dict | None:
         if self._nvidia:
-            return self._poll_nvidia()
-        if self._card_path:
+            result = self._poll_nvidia()
+        elif self._card_path:
             result = self._poll_sysfs()
             if result is not None:
                 result["engines"] = self._poll_sysfs_engines()
-            return result
-        return None
+        else:
+            return None
+        return (result | self._static_info) if result is not None else None
+
+    def _nvidia_static_info(self) -> dict:
+        try:
+            out = subprocess.check_output(
+                [self._nvidia, "--query-gpu=driver_version,pci.bus_id",
+                 "--format=csv,noheader"],
+                text=True, timeout=2, stderr=subprocess.DEVNULL,
+            )
+            version, bus_id = (part.strip() for part in out.splitlines()[0].split(","))
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError,
+                IndexError, ValueError):
+            return {}
+        return {"driver": "nvidia", "driver_version": version,
+                "pci_location": _pci_location_text(bus_id)}
+
+    def _sysfs_static_info(self) -> dict:
+        try:
+            with open(f"{self._card_path}/uevent") as f:
+                uevent = f.read()
+        except OSError:
+            return {}
+        driver = re.search(r"DRIVER=(\w+)", uevent)
+        slot = re.search(r"PCI_SLOT_NAME=(\S+)", uevent)
+        driver_name = driver.group(1) if driver else ""
+        info = {"driver": driver_name}
+        version = _read_sysfs_str(f"/sys/module/{driver_name}/version") if driver_name else None
+        # In-tree drivers (amdgpu, i915, nouveau) have no own version: they ship with the kernel.
+        info["driver_version"] = version or f"Kernel {platform.release()}"
+        if slot:
+            info["pci_location"] = _pci_location_text(slot.group(1))
+            name = _lspci_gpu_name(slot.group(1))
+            if name:
+                info["name"] = name
+        return info
 
     def _poll_nvidia(self) -> dict | None:
+        try:
+            out = subprocess.check_output(
+                [self._nvidia,
+                 "--query-gpu=name,utilization.gpu,memory.used,memory.total,"
+                 "temperature.gpu,power.draw,pcie.link.gen.current,"
+                 "pcie.link.width.current,pcie.link.gen.max,pcie.link.width.max,"
+                 "pcie.tx_util,pcie.rx_util",
+                 "--format=csv,noheader,nounits"],
+                text=True, timeout=2, stderr=subprocess.DEVNULL,
+            )
+            fields = [part.strip() for part in out.splitlines()[0].split(",")]
+            name, util, mem_used, mem_total, temp, power = fields[:6]
+            pcie_gen, pcie_width, max_gen, max_width, tx_util, rx_util = fields[6:]
+            result = {
+                "name": name,
+                "percent": float(util),
+                "vram_used_mb": float(mem_used),
+                "vram_total_mb": float(mem_total),
+                "temp_c": float(temp),
+                "power_w": float(power),
+                "pcie": _pcie_link_info(pcie_gen, pcie_width, max_gen, max_width) | {
+                    "tx_mb_s": _nvidia_rate_mb_s(tx_util),
+                    "rx_mb_s": _nvidia_rate_mb_s(rx_util),
+                },
+            }
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError,
+                IndexError, ValueError):
+            return self._poll_nvidia_legacy()
+        result["engines"] = self._poll_nvidia_engines()
+        return result
+
+    def _poll_nvidia_legacy(self) -> dict | None:
+        """Keep older NVIDIA drivers usable when PCIe query fields are absent."""
         try:
             out = subprocess.check_output(
                 [self._nvidia,
@@ -238,11 +413,12 @@ class GpuSystemMonitor:
                 "vram_total_mb": float(mem_total),
                 "temp_c": float(temp),
                 "power_w": float(power),
+                "pcie": {},
             }
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError,
                 IndexError, ValueError):
             return None
-            result["engines"] = self._poll_nvidia_engines()
+        result["engines"] = self._poll_nvidia_engines()
         return result | {"gtt_used_mb": None, "gtt_total_mb": None}
 
     def _poll_nvidia_engines(self) -> dict[str, float]:
@@ -350,6 +526,12 @@ class GpuSystemMonitor:
             "gtt_total_mb": (gtt_total / (1024 * 1024)) if gtt_total is not None else None,
             "temp_c": temp_c,
             "power_w": power_w,
+            "pcie": _pcie_link_info(
+                _read_sysfs_str(f"{self._card_path}/current_link_speed") or "",
+                _read_sysfs_str(f"{self._card_path}/current_link_width") or "",
+                _read_sysfs_str(f"{self._card_path}/max_link_speed") or "",
+                _read_sysfs_str(f"{self._card_path}/max_link_width") or "",
+            ),
         }
 
     @staticmethod
@@ -846,6 +1028,8 @@ def _sensor_value(filename: str, value: float) -> tuple[float, str]:
         return value / 1_000_000, "J"
     if filename.startswith("humidity"):
         return value / 1000, "%"
+    if filename.startswith("freq"):  # hwmon reports clocks in Hz (e.g. amdgpu sclk/mclk)
+        return value / 1_000_000, "MHz"
     return value, ""
 
 
@@ -1112,6 +1296,8 @@ class DockerWorker(QThread):
                 time.sleep(0.1)
 
     def _collect_rows(self) -> tuple[list[DockerContainerRow], str]:
+        if not self._docker:
+            return [], "Docker ist nicht installiert oder nicht im PATH."
         try:
             ps_out = subprocess.check_output(
                 [self._docker, "ps", "-a", "--format", "{{json .}}"],
@@ -1322,6 +1508,13 @@ def list_autostart_entries() -> list[AutostartEntry]:
 def set_autostart_enabled(entry: AutostartEntry, enabled: bool) -> tuple[bool, str]:
     """Enable/disable an autostart entry. System entries are never edited directly;
     instead a per-user override copy is created in ~/.config/autostart (XDG spec)."""
+    allowed_dirs = [os.path.realpath(d) for d in (_AUTOSTART_USER_DIR, *_autostart_system_dirs())]
+    source_dir = os.path.dirname(os.path.realpath(entry.path))
+    if (os.path.basename(entry.filename) != entry.filename
+            or not entry.filename.endswith(".desktop")
+            or source_dir not in allowed_dirs):
+        # Never edit a file outside the XDG autostart folders, whatever the entry says.
+        return False, "Ungültiger Autostart-Eintrag"
     try:
         os.makedirs(_AUTOSTART_USER_DIR, exist_ok=True)
         target_path = entry.path

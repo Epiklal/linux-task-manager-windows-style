@@ -2,7 +2,14 @@
 set -eu
 
 if [[ "${1:-}" == "memory" ]]; then
-    exec /usr/sbin/dmidecode -t memory
+    # /usr/sbin on most distributions, /usr/bin on merged-/usr systems like Arch.
+    for dmidecode in /usr/sbin/dmidecode /usr/bin/dmidecode; do
+        if [[ -x "$dmidecode" ]]; then
+            exec "$dmidecode" -t memory
+        fi
+    done
+    echo "dmidecode ist nicht installiert" >&2
+    exit 127
 fi
 
 device="${1:-}"

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 from PySide6.QtCore import QSettings
 
@@ -9,13 +10,32 @@ ORG = "WinTaskManager"
 APP = "TaskManager"
 
 DEFAULT_THEME = "light"
+DEFAULT_STYLE = "win10"  # "win10" or "win11" window layout / look
 DEFAULT_PROCESS_INTERVAL_MS = 1000
 DEFAULT_PERFORMANCE_INTERVAL_MS = 500
+DEFAULT_REMOTE_HOST = "127.0.0.1"
+DEFAULT_REMOTE_PORT = 8765
 
 
 class Settings:
     def __init__(self):
         self._store = QSettings(ORG, APP)
+        self._restrict_permissions()
+
+    def _restrict_permissions(self) -> None:
+        """The file holds the remote-server token: readable by this user only (0600).
+        QSettings keeps the mode when it rewrites the file later."""
+        path = self._store.fileName()
+        try:
+            if os.path.exists(path):
+                os.chmod(path, 0o600)
+            else:
+                # Create it empty with 0600 now, so it is never readable by others,
+                # not even right after the very first start.
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                os.close(os.open(path, os.O_CREAT | os.O_WRONLY, 0o600))
+        except OSError:
+            pass
 
     @property
     def theme(self) -> str:
@@ -24,6 +44,15 @@ class Settings:
     @theme.setter
     def theme(self, value: str) -> None:
         self._store.setValue("theme", value)
+
+    @property
+    def style(self) -> str:
+        value = self._store.value("style", DEFAULT_STYLE, type=str)
+        return value if value in ("win10", "win11") else DEFAULT_STYLE
+
+    @style.setter
+    def style(self, value: str) -> None:
+        self._store.setValue("style", value)
 
     @property
     def process_interval_ms(self) -> int:
@@ -44,6 +73,40 @@ class Settings:
     @performance_interval_ms.setter
     def performance_interval_ms(self, value: int) -> None:
         self._store.setValue("performance_interval_ms", value)
+
+    @property
+    def remote_host(self) -> str:
+        return self._store.value("remote_host", DEFAULT_REMOTE_HOST, type=str)
+
+    @remote_host.setter
+    def remote_host(self, value: str) -> None:
+        self._store.setValue("remote_host", value)
+
+    @property
+    def remote_enabled(self) -> bool:
+        return self._store.value("remote_enabled", False, type=bool)
+
+    @remote_enabled.setter
+    def remote_enabled(self, value: bool) -> None:
+        self._store.setValue("remote_enabled", value)
+
+    @property
+    def remote_port(self) -> int:
+        return self._store.value("remote_port", DEFAULT_REMOTE_PORT, type=int)
+
+    @remote_port.setter
+    def remote_port(self, value: int) -> None:
+        self._store.setValue("remote_port", value)
+
+    @property
+    def remote_token(self) -> str:
+        return self._store.value("remote_token", "", type=str)
+
+    @remote_token.setter
+    def remote_token(self, value: str) -> None:
+        self._store.setValue("remote_token", value)
+        self._store.sync()  # make sure the file exists before locking it down
+        self._restrict_permissions()
 
     @property
     def smart_sudo_enabled(self) -> bool:

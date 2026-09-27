@@ -22,6 +22,8 @@ COLUMNS = ["Name", "Befehl", "Quelle", "Status"]
 _DEFAULT_COLUMN_WIDTHS = [200, 320, 90, 100]
 
 
+_REMOTE_ACTION_HINT = "Im Remote-Modus zeigt diese Liste Daten des Servers. Aktionen würden auf diesem PC ausgeführt und sind deshalb gesperrt."
+
 class AutostartListWorker(QThread):
     entriesReady = Signal(list)
 
@@ -76,9 +78,13 @@ class AutostartPage(QWidget):
 
         self._all_entries: list[AutostartEntry] = []
         self.worker: AutostartListWorker | None = None
+        self._remote_entries = None
         self.refresh()
 
     def refresh(self) -> None:
+        if self._remote_entries is not None:
+            self._on_entries_ready(self._remote_entries)
+            return
         if self.worker is not None and self.worker.isRunning():
             return
         self.worker = AutostartListWorker(parent=self)
@@ -88,6 +94,13 @@ class AutostartPage(QWidget):
     def _on_entries_ready(self, entries: list[AutostartEntry]) -> None:
         self._all_entries = entries
         self._apply_filter(self.search_box.text())
+
+    def set_remote_autostart(self, entries: list[dict] | None) -> None:
+        self._remote_entries = entries
+        if entries is not None and self.worker is not None and self.worker.isRunning():
+            self.worker.terminate()
+        if entries is not None:
+            self._on_entries_ready([AutostartEntry(**entry) for entry in entries])
 
     def _apply_filter(self, text: str) -> None:
         text = text.lower()
@@ -112,7 +125,10 @@ class AutostartPage(QWidget):
         return next((e for e in self._all_entries if e.filename == filename), None)
 
     def _on_selection_changed(self) -> None:
-        self.toggle_btn.setEnabled(self._selected_entry() is not None)
+        # Remote entries describe files on the server; toggling would edit local files.
+        remote = self._remote_entries is not None
+        self.toggle_btn.setEnabled(self._selected_entry() is not None and not remote)
+        self.toggle_btn.setToolTip(_REMOTE_ACTION_HINT if remote else "")
 
     def _save_column_widths(self, *_args) -> None:
         widths = [self.table.columnWidth(col) for col in range(len(COLUMNS))]
@@ -120,7 +136,7 @@ class AutostartPage(QWidget):
 
     def _toggle_selected(self) -> None:
         entry = self._selected_entry()
-        if entry is None:
+        if entry is None or self._remote_entries is not None:
             return
         ok, error = set_autostart_enabled(entry, not entry.enabled)
         if not ok:

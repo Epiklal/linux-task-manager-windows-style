@@ -73,6 +73,9 @@ class ServicesPage(QWidget):
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        # Unit names like "systemd-journald.service" need room; the description stretches.
+        self.table.setColumnWidth(0, 300)
+        self.table.setColumnWidth(2, 130)
         self.table.verticalHeader().setVisible(False)
 
         layout = QVBoxLayout(self)
@@ -81,9 +84,13 @@ class ServicesPage(QWidget):
 
         self._all_rows: list[tuple[str, str, str]] = []
         self.worker: ServiceListWorker | None = None
+        self._remote_rows = None
         self.refresh()
 
     def refresh(self) -> None:
+        if self._remote_rows is not None:
+            self._on_services_ready(self._remote_rows)
+            return
         if self.worker is not None and self.worker.isRunning():
             return
         self.worker = ServiceListWorker(parent=self)
@@ -98,6 +105,13 @@ class ServicesPage(QWidget):
                 "Keine systemd-Dienste gefunden (systemctl nicht verfügbar)."
             )
         self._apply_filter(self.search_box.text())
+
+    def set_remote_services(self, rows: list | None) -> None:
+        self._remote_rows = rows
+        if rows is not None and self.worker is not None and self.worker.isRunning():
+            self.worker.terminate()
+        if rows is not None:
+            self._on_services_ready(rows)
 
     def _apply_filter(self, text: str) -> None:
         text = text.lower()

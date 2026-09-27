@@ -20,6 +20,16 @@ if [[ "$PYTHON_BIN" == *".venv/bin/python" ]]; then
         echo "Die virtuelle Umgebung ist beschädigt oder fehlt. Bitte zuerst ./install.sh ausführen." >&2
         exit 1
     fi
+    if ! "$PYTHON_BIN" - <<'PY' >/dev/null 2>&1
+import importlib.util
+for name in ("PySide6", "psutil"):
+    if importlib.util.find_spec(name) is None:
+        raise SystemExit(1)
+PY
+    then
+        echo "Die virtuelle Umgebung ist unvollständig. Bitte zuerst ./install.sh ausführen." >&2
+        exit 1
+    fi
 else
     if ! "$PYTHON_BIN" - <<'PY' >/dev/null 2>&1
 import importlib.util

@@ -32,6 +32,8 @@ _HEATMAP_COLUMNS = {4: 100.0, 5: 4096.0, 7: 100.0, 8: 100.0, 9: 4096.0}
 _IMAGE_FILTER = "Bilder (*.png *.jpg *.jpeg *.bmp *.svg *.ico);;Alle Dateien (*)"
 
 
+_REMOTE_ACTION_HINT = "Im Remote-Modus zeigt diese Liste Daten des Servers. Aktionen würden auf diesem PC ausgeführt und sind deshalb gesperrt."
+
 class DockerTableModel(QAbstractTableModel):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -199,6 +201,7 @@ class DockerPage(QWidget):
 
         self._interval = 2.0
         self.worker: DockerWorker | None = None
+        self._remote_rows = None
         self._start_worker()
 
     def _start_worker(self) -> None:
@@ -206,6 +209,20 @@ class DockerPage(QWidget):
         self.worker.rowsReady.connect(self._on_rows_ready)
         self.worker.unavailable.connect(self._on_unavailable)
         self.worker.start()
+
+    def set_remote_docker(self, rows: list[dict] | None, error: str = "") -> None:
+        self._remote_rows = rows
+        if rows is None:
+            self._on_selection_changed()
+            if self.worker is None or not self.worker.isRunning():
+                self._start_worker()
+            return
+        if self.worker is not None and self.worker.isRunning():
+            self.worker.stop()
+        self._on_rows_ready([DockerContainerRow(**row) for row in rows])
+        if error:
+            self._on_unavailable(error)
+        self._on_selection_changed()
 
     def _on_rows_ready(self, rows: list[DockerContainerRow]) -> None:
         self.info_label.setVisible(False)
@@ -246,11 +263,17 @@ class DockerPage(QWidget):
     def _on_selection_changed(self) -> None:
         container = self._selected_container()
         has_selection = container is not None
-        for btn in (self.icon_btn, self.rename_btn, self.favorite_btn,
-                    self.restart_btn, self.remove_btn):
+        # Icon / name / favourite are local metadata and stay usable in remote mode;
+        # lifecycle actions would hit the local Docker daemon, not the server's.
+        remote = self._remote_rows is not None
+        for btn in (self.icon_btn, self.rename_btn, self.favorite_btn):
             btn.setEnabled(has_selection)
-        self.start_btn.setEnabled(has_selection and not container.running if container else False)
-        self.stop_btn.setEnabled(has_selection and container.running if container else False)
+        self.restart_btn.setEnabled(has_selection and not remote)
+        self.remove_btn.setEnabled(has_selection and not remote)
+        self.start_btn.setEnabled(bool(container) and not container.running and not remote)
+        self.stop_btn.setEnabled(bool(container) and container.running and not remote)
+        for btn in (self.restart_btn, self.remove_btn, self.start_btn, self.stop_btn):
+            btn.setToolTip(_REMOTE_ACTION_HINT if remote else "")
         self.favorite_btn.blockSignals(True)
         self.favorite_btn.setChecked(
             bool(self._meta.get(container.name, {}).get("favorite")) if container else False
@@ -305,7 +328,7 @@ class DockerPage(QWidget):
 
     def _run_action(self, action: str) -> None:
         container = self._selected_container()
-        if container is None:
+        if container is None or self._remote_rows is not None:
             return
         if action == "rm":
             confirm = QMessageBox.question(

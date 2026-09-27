@@ -2,16 +2,19 @@
 from __future__ import annotations
 
 import getpass
-import shlex
+import shutil
 from pathlib import Path
 
 from PySide6.QtCore import QProcess, Signal
 from PySide6.QtWidgets import (
     QComboBox,
+    QCheckBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
+    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QSpinBox,
@@ -19,9 +22,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.hardware_setup import setup_script, terminal_command
 from app.settings import Settings
+from app.themes import SCHEMES
 
-THEME_LABELS = {"light": "Hell (Standard)", "dark": "Dunkel"}
 QSS_TEMPLATES = {
     "Gesamte App": """QWidget {
     background-color: #191919;
@@ -76,10 +80,12 @@ QWidget#resourceTile[selected=\"true\"] {
 
 class SettingsPage(QWidget):
     themeChanged = Signal(str)
+    styleChanged = Signal(str)
     processIntervalChanged = Signal(int)  # milliseconds
     performanceIntervalChanged = Signal(int)  # milliseconds
     smartSudoEnabled = Signal(bool)
     customQssChanged = Signal(str)
+    remoteConnectionChanged = Signal(bool, str, int, str)
 
     def __init__(self, settings: Settings, parent=None):
         super().__init__(parent)
@@ -87,12 +93,19 @@ class SettingsPage(QWidget):
 
         appearance_box = QGroupBox("Darstellung")
         self.theme_combo = QComboBox()
-        for key, label in THEME_LABELS.items():
-            self.theme_combo.addItem(label, key)
+        for key, scheme in SCHEMES.items():
+            self.theme_combo.addItem(scheme.name, key)
         self.theme_combo.setCurrentIndex(self.theme_combo.findData(settings.theme))
         self.theme_combo.currentIndexChanged.connect(self._on_theme_changed)
 
+        self.style_combo = QComboBox()
+        self.style_combo.addItem("Windows 10", "win10")
+        self.style_combo.addItem("Windows 11", "win11")
+        self.style_combo.setCurrentIndex(self.style_combo.findData(settings.style))
+        self.style_combo.currentIndexChanged.connect(self._on_style_changed)
+
         appearance_form = QFormLayout(appearance_box)
+        appearance_form.addRow("Design:", self.style_combo)
         appearance_form.addRow("Farbschema:", self.theme_combo)
 
         speed_box = QGroupBox("Aktualisierungsgeschwindigkeit")
@@ -113,6 +126,26 @@ class SettingsPage(QWidget):
         speed_form = QFormLayout(speed_box)
         speed_form.addRow("Prozessliste:", self.process_spin)
         speed_form.addRow("Leistungsdiagramme:", self.performance_spin)
+
+        remote_box = QGroupBox("Remote-Server")
+        self.remote_enabled_check = QCheckBox("Daten vom Server verwenden")
+        self.remote_enabled_check.setChecked(settings.remote_enabled)
+        self.remote_host_edit = QLineEdit(settings.remote_host)
+        self.remote_host_edit.setPlaceholderText("127.0.0.1 oder Server-IP")
+        self.remote_port_spin = QSpinBox()
+        self.remote_port_spin.setRange(1, 65535)
+        self.remote_port_spin.setValue(settings.remote_port)
+        self.remote_token_edit = QLineEdit(settings.remote_token)
+        self.remote_token_edit.setPlaceholderText("Optionaler Zugriffsschlüssel")
+        self.remote_token_edit.setEchoMode(QLineEdit.Password)
+        self.remote_connect_button = QPushButton("Serververbindung anwenden")
+        self.remote_connect_button.clicked.connect(self._apply_remote_connection)
+        remote_form = QFormLayout(remote_box)
+        remote_form.addRow(self.remote_enabled_check)
+        remote_form.addRow("Server-IP:", self.remote_host_edit)
+        remote_form.addRow("Port:", self.remote_port_spin)
+        remote_form.addRow("Zugriffsschlüssel:", self.remote_token_edit)
+        remote_form.addRow(self.remote_connect_button)
 
         smart_box = QGroupBox("Hardwaredaten (SMART und Arbeitsspeicher)")
         self.smart_setup_button = QPushButton("Hardwaredaten mit sudo einrichten")
@@ -158,6 +191,7 @@ class SettingsPage(QWidget):
         layout = QVBoxLayout(self)
         layout.addWidget(appearance_box)
         layout.addWidget(speed_box)
+        layout.addWidget(remote_box)
         layout.addWidget(smart_box)
         layout.addWidget(custom_qss_box)
         layout.addWidget(hint)
@@ -168,6 +202,11 @@ class SettingsPage(QWidget):
         self.settings.theme = theme
         self.themeChanged.emit(theme)
 
+    def _on_style_changed(self, index: int) -> None:
+        style = self.style_combo.itemData(index)
+        self.settings.style = style
+        self.styleChanged.emit(style)
+
     def _on_process_interval_changed(self, value: int) -> None:
         self.settings.process_interval_ms = value
         self.processIntervalChanged.emit(value)
@@ -175,6 +214,18 @@ class SettingsPage(QWidget):
     def _on_performance_interval_changed(self, value: int) -> None:
         self.settings.performance_interval_ms = value
         self.performanceIntervalChanged.emit(value)
+
+    def _apply_remote_connection(self) -> None:
+        host = self.remote_host_edit.text().strip() or "127.0.0.1"
+        port = self.remote_port_spin.value()
+        token = self.remote_token_edit.text().strip()
+        self.settings.remote_host = host
+        self.settings.remote_port = port
+        self.settings.remote_token = token
+        self.settings.remote_enabled = self.remote_enabled_check.isChecked()
+        self.remoteConnectionChanged.emit(
+            self.remote_enabled_check.isChecked(), host, port, token
+        )
 
     def _apply_custom_qss(self) -> None:
         qss = self.custom_qss_edit.toPlainText()
@@ -200,21 +251,21 @@ class SettingsPage(QWidget):
         return "Für Temperatur, Startvorgänge und Gesamtdaten benötigt SMART meist sudo."
 
     def _setup_smart_access(self) -> None:
+        if not shutil.which("sudo"):
+            self.smart_status.setText(
+                "sudo ist nicht installiert - die Einrichtung benötigt sudo.")
+            return
         helper_source = Path(__file__).resolve().parents[1] / "scripts" / "wintaskmanager-smartctl"
-        username = shlex.quote(getpass.getuser())
-        helper_path = shlex.quote(str(helper_source))
-        command = (
-            "sudo apt-get update && sudo apt-get install -y smartmontools && "
-            "sudo install -d -m 0755 /usr/local/libexec && "
-            f"sudo install -m 0755 {helper_path} /usr/local/libexec/wintaskmanager-smartctl && "
-            f"printf '%s\\n' '{username} ALL=(root) NOPASSWD: /usr/local/libexec/wintaskmanager-smartctl *' | "
-            "sudo tee /etc/sudoers.d/wintaskmanager-smartctl >/dev/null && "
-            "sudo chmod 440 /etc/sudoers.d/wintaskmanager-smartctl && "
-            "sudo visudo -cf /etc/sudoers.d/wintaskmanager-smartctl; "
-            "echo 'Dauerhafter, eingeschränkter Zugriff auf SMART- und RAM-Daten eingerichtet. Dieses Terminal kann geschlossen werden.'; exec bash"
-        )
-        started = QProcess.startDetached("x-terminal-emulator", ["-e", "bash", "-lc", command])
-        if not started:
+        script = setup_script(str(helper_source), getpass.getuser())
+        command = terminal_command(script)
+        if command is None or not QProcess.startDetached(command[0], command[1:]):
+            # No known terminal emulator: show the commands so they can be run by hand.
+            box = QMessageBox(self)
+            box.setWindowTitle("Hardwaredaten einrichten")
+            box.setText("Kein Terminal gefunden. Bitte diese Befehle in einem Terminal "
+                        "ausführen:")
+            box.setDetailedText(script)
+            box.exec()
             self.smart_status.setText("Terminal konnte nicht gestartet werden.")
             return
         self.smart_status.setText(

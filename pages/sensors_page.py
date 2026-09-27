@@ -50,10 +50,11 @@ class SensorsPage(QWidget):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh)
         self.timer.start(1000)
+        self._remote_sensors = None
         self.refresh()
 
     def refresh(self) -> None:
-        sensors = list_hardware_sensors()
+        sensors = self._remote_sensors if self._remote_sensors is not None else list_hardware_sensors()
         self.table.setSortingEnabled(False)
         self.table.setRowCount(len(sensors))
         for row, sensor in enumerate(sensors):
@@ -71,6 +72,10 @@ class SensorsPage(QWidget):
                 self.table.setItem(row, column, item)
         self.table.setSortingEnabled(True)
         self.summary.setText(f"{len(sensors)} lesbare Sensoren")
+
+    def set_remote_sensors(self, sensors: list[dict] | None) -> None:
+        self._remote_sensors = sensors
+        self.refresh()
 
     def shutdown(self) -> None:
         self.timer.stop()

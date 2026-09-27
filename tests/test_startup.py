@@ -6,9 +6,15 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import shiboken6  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from app.main_window import MainWindow  # noqa: E402
+
+
+def _stopped(thread) -> bool:
+    # Shutdown deletes finished workers (deleteLater), which also counts as stopped.
+    return thread is None or not shiboken6.isValid(thread) or not thread.isRunning()
 
 
 class TestStartup(unittest.TestCase):
@@ -41,11 +47,11 @@ class TestStartup(unittest.TestCase):
         QApplication.processEvents()
         for _ in range(20):
             QApplication.processEvents()
-            if all(thread is None or not thread.isRunning() for thread in threads):
+            if all(_stopped(thread) for thread in threads):
                 break
             self.app.thread().msleep(50)
 
-        self.assertTrue(all(thread is None or not thread.isRunning() for thread in threads))
+        self.assertTrue(all(_stopped(thread) for thread in threads))
         window.deleteLater()
 
 

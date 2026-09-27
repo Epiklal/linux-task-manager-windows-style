@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.system_info import list_physical_disks
+from app.remote_client import RemoteBenchmarkWorker
 
 _BENCHMARKS = {
     "cpu": ("CPU", "sysbench"),
@@ -33,6 +34,28 @@ _BENCHMARKS = {
     "gpu": ("GPU", "glmark2"),
     "disk": ("Datenträger", "fio"),
 }
+
+
+def _writable_dir_on(mountpoint: str) -> str:
+    """A directory the user may write to on the same filesystem as `mountpoint`.
+
+    Mount points like "/" or "/boot/efi" usually belong to root, so the test file
+    goes into e.g. ~/.cache or /var/tmp on that disk instead. /tmp only counts if it
+    really is on that disk (it is often a RAM disk, which would measure memory)."""
+    try:
+        device = os.stat(mountpoint).st_dev
+    except OSError as error:
+        raise ValueError(f"Ziel nicht erreichbar: {mountpoint}") from error
+    home = os.path.expanduser("~")
+    candidates = [mountpoint, os.environ.get("XDG_CACHE_HOME") or os.path.join(home, ".cache"),
+                  home, "/var/tmp", "/tmp"]
+    for candidate in candidates:
+        try:
+            if os.stat(candidate).st_dev == device and os.access(candidate, os.W_OK):
+                return candidate
+        except OSError:
+            continue
+    raise ValueError(f"Keine Schreibrechte auf {mountpoint} - bitte ein anderes Ziel wählen")
 
 
 class BenchmarkWorker(QThread):
@@ -101,8 +124,9 @@ class BenchmarkWorker(QThread):
     def _run_disk(self) -> tuple[str, str]:
         if not self._disk_directory:
             raise ValueError("Kein eingebundenes Datenträger-Ziel ausgewählt")
+        work_dir = _writable_dir_on(self._disk_directory)
         with tempfile.TemporaryDirectory(
-            prefix="wintaskmanager-benchmark-", dir=self._disk_directory,
+            prefix="wintaskmanager-benchmark-", dir=work_dir,
         ) as temp_dir:
             output = subprocess.check_output(
                 [
@@ -122,6 +146,7 @@ class BenchmarksPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.worker: BenchmarkWorker | None = None
+        self._remote_config = None
 
         self.checkboxes = {}
         controls = QHBoxLayout()
@@ -178,6 +203,17 @@ class BenchmarksPage(QWidget):
         self.results.setRowCount(0)
         self.start_button.setEnabled(False)
         self.status.setText("Benchmark läuft. Die Oberfläche bleibt bedienbar.")
+        if self._remote_config:
+            host, port, token = self._remote_config
+            self.worker = RemoteBenchmarkWorker(
+                host, port, token, selected, self.cpu_threads.value(),
+                self.cpu_seconds.value(), self.cpu_max_prime.value(),
+                None, self,
+            )
+            self.worker.resultReady.connect(self._add_result)
+            self.worker.finished.connect(self._on_finished)
+            self.worker.start()
+            return
         self.worker = BenchmarkWorker(
             selected, self.cpu_threads.value(), self.cpu_seconds.value(),
             self.cpu_max_prime.value(), self.disk_target.currentData(), self,
@@ -186,9 +222,18 @@ class BenchmarksPage(QWidget):
         self.worker.finished.connect(self._on_finished)
         self.worker.start()
 
+    def set_remote_connection(self, enabled: bool, host: str, port: int, token: str) -> None:
+        self._remote_config = (host, port, token) if enabled else None
+        self.status.setText("Remote-Benchmark aktiv" if enabled else "Lokale Benchmarks aktiv")
+
     def _add_result(self, area: str, result: str, details: str) -> None:
-        row = self.results.rowCount()
-        self.results.insertRow(row)
+        # One row per test: the "Läuft" (running) row is replaced by the result.
+        row = next((r for r in range(self.results.rowCount())
+                    if self.results.item(r, 0).text() == area
+                    and self.results.item(r, 1).text() == "Läuft"), None)
+        if row is None:
+            row = self.results.rowCount()
+            self.results.insertRow(row)
         for column, value in enumerate((area, result, details)):
             self.results.setItem(row, column, QTableWidgetItem(value))
 
