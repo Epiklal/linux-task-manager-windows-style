@@ -690,7 +690,7 @@ class PerformancePage(QWidget):
         net_info = get_primary_network_info()
 
         gpu = self._latest_gpu
-        gpu_percent = gpu["percent"] if gpu else 0.0
+        gpu_percent = (gpu.get("percent") if gpu else None) or 0.0
         self.tiles["gpu"].update_value(gpu_percent)
         self._update_gpu_graphs(gpu, gpu_percent)
 

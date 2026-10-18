@@ -73,6 +73,14 @@ def _pcie_generation(speed_gt_s: float | None) -> str | None:
     return f"Gen {generations[closest]}"
 
 
+def _nvidia_float(value: str) -> float | None:
+    """nvidia-smi prints "[N/A]" / "[Not Supported]" for fields an older GPU lacks."""
+    try:
+        return float(value)
+    except ValueError:
+        return None
+
+
 def _nvidia_rate_mb_s(value: str) -> float | None:
     match = re.search(r"([0-9]+(?:\.[0-9]+)?)", value)
     return float(match.group(1)) if match else None
@@ -131,6 +139,10 @@ class GpuMonitor:
         self._nvidia = _NVIDIA_SMI
         self._prev_busy: dict[int, tuple[float, int]] = {}
         self._backend_available = bool(self._nvidia) or self._probe_drm_fdinfo()
+        # Older GeForce cards (e.g. Fermi on the 390 driver) don't support pmon or
+        # per-process queries; stop spawning nvidia-smi for them after one failure.
+        self._pmon_ok = True
+        self._compute_apps_ok = True
 
     def available(self) -> bool:
         return self._backend_available
@@ -165,10 +177,14 @@ class GpuMonitor:
     def _poll_nvidia(self) -> dict[int, dict]:
         usage: dict[int, dict] = {}
         try:
+            if not self._pmon_ok:
+                raise OSError("pmon not supported")
             out = subprocess.check_output(
                 [self._nvidia, "pmon", "-c", "1", "-s", "u"],
                 text=True, encoding="utf-8", errors="replace", timeout=3, stderr=subprocess.DEVNULL,
             )
+            if "not supported" in out.lower():
+                self._pmon_ok = False
             for line in out.splitlines():
                 if not line or line.startswith("#"):
                     continue
@@ -183,15 +199,21 @@ class GpuMonitor:
                 usage.setdefault(pid, {})["gpu_percent"] = (
                     float(sm) if sm.replace(".", "", 1).isdigit() else 0.0
                 )
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        except subprocess.CalledProcessError:
+            self._pmon_ok = False
+        except (subprocess.TimeoutExpired, OSError):
             pass
 
         try:
+            if not self._compute_apps_ok:
+                raise OSError("compute-apps not supported")
             out = subprocess.check_output(
                 [self._nvidia, "--query-compute-apps=pid,used_memory",
                  "--format=csv,noheader,nounits"],
                 text=True, encoding="utf-8", errors="replace", timeout=3, stderr=subprocess.DEVNULL,
             )
+            if "not supported" in out.lower():
+                self._compute_apps_ok = False
             for line in out.splitlines():
                 parts = [p.strip() for p in line.split(",")]
                 if len(parts) != 2:
@@ -202,7 +224,9 @@ class GpuMonitor:
                 except ValueError:
                     continue
                 usage.setdefault(pid, {})["vram_mb"] = vram_mb
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        except subprocess.CalledProcessError:
+            self._compute_apps_ok = False
+        except (subprocess.TimeoutExpired, OSError):
             pass
         return usage
 
@@ -324,6 +348,10 @@ class GpuSystemMonitor:
         self._card_path = None if self._nvidia else self._find_card()
         self._prev_engine_busy: dict[str, int] = {}
         self._prev_engine_time: float | None = None
+        # Remember which nvidia-smi queries the GPU/driver can't answer, so they
+        # aren't retried (each nvidia-smi start is expensive) on every poll.
+        self._full_query_ok = True
+        self._dmon_ok = True
         # Name / driver / PCI location never change, so they are read only once.
         self._static_info = (self._nvidia_static_info() if self._nvidia
                              else self._sysfs_static_info() if self._card_path else {})
@@ -398,6 +426,8 @@ class GpuSystemMonitor:
         return info
 
     def _poll_nvidia(self) -> dict | None:
+        if not self._full_query_ok:
+            return self._poll_nvidia_legacy()
         try:
             out = subprocess.check_output(
                 [self._nvidia,
@@ -423,9 +453,11 @@ class GpuSystemMonitor:
                     "rx_mb_s": _nvidia_rate_mb_s(rx_util),
                 },
             }
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError,
-                IndexError, ValueError):
+        except (subprocess.CalledProcessError, IndexError, ValueError):
+            self._full_query_ok = False  # older driver/GPU: PCIe fields unsupported
             return self._poll_nvidia_legacy()
+        except (subprocess.TimeoutExpired, OSError):
+            return None
         result["engines"] = self._poll_nvidia_engines()
         return result
 
@@ -442,13 +474,14 @@ class GpuSystemMonitor:
             name, util, mem_used, mem_total, temp, power = (
                 p.strip() for p in out.splitlines()[0].split(",")
             )
+            # Fields an old GeForce can't report (utilization, power) become None.
             result = {
                 "name": name,
-                "percent": float(util),
-                "vram_used_mb": float(mem_used),
-                "vram_total_mb": float(mem_total),
-                "temp_c": float(temp),
-                "power_w": float(power),
+                "percent": _nvidia_float(util),
+                "vram_used_mb": _nvidia_float(mem_used),
+                "vram_total_mb": _nvidia_float(mem_total),
+                "temp_c": _nvidia_float(temp),
+                "power_w": _nvidia_float(power),
                 "pcie": {},
             }
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError,
@@ -458,6 +491,8 @@ class GpuSystemMonitor:
         return result | {"gtt_used_mb": None, "gtt_total_mb": None}
 
     def _poll_nvidia_engines(self) -> dict[str, float]:
+        if not self._dmon_ok:
+            return {}
         try:
             out = subprocess.check_output(
                 [self._nvidia, "dmon", "-c", "1", "-s", "u"],
@@ -474,8 +509,11 @@ class GpuSystemMonitor:
                     "3D": float(sm), "Speicher-Controller": float(mem),
                     "Video-Encode": float(enc), "Video-Decode": float(dec),
                 }
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError, ValueError):
+        except (subprocess.CalledProcessError, ValueError):
             pass
+        except (subprocess.TimeoutExpired, OSError):
+            return {}
+        self._dmon_ok = False  # no usable dmon output (e.g. "-" columns on old GPUs)
         return {}
 
     def _poll_sysfs_engines(self) -> dict[str, float]:

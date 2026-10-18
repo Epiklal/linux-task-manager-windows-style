@@ -115,22 +115,47 @@ def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
     docker_worker = DockerWorker()
     service_worker = ServiceListWorker()
 
-    def full_snapshot() -> dict:
+    # The client asks for a snapshot every second, but most of it changes slowly
+    # and is expensive to collect (docker, systemctl, nvidia-smi). Each part is
+    # refreshed only after its own max age; one lock keeps parallel requests
+    # from collecting the same data twice.
+    cache: dict[str, tuple[float, object]] = {}
+    snapshot_lock = threading.Lock()
+
+    def cached(key: str, max_age: float, collect):
+        now = time.monotonic()
+        entry = cache.get(key)
+        if entry is None or now - entry[0] >= max_age:
+            entry = (now, collect())
+            cache[key] = entry
+        return entry[1]
+
+    def collect_processes() -> list[dict]:
         process_worker._sync_process_table()
-        processes = [asdict(row) for row in process_worker._collect_rows()]
+        return [asdict(row) for row in process_worker._collect_rows()]
+
+    def collect_docker() -> tuple[list[dict], str]:
         docker_rows, docker_error = docker_worker._collect_rows()
-        return {
-            "system": system_snapshot(),
-            "cpu_model": get_cpu_model_name(),
-            "gpu": MonitoringHandler.monitor.poll(),
-            "processes": processes,
-            "sensors": list_hardware_sensors(),
-            "services": service_worker._fetch(),
-            "docker": [asdict(row) for row in docker_rows],
-            "docker_error": docker_error,
-            "autostart": [asdict(entry) for entry in list_autostart_entries()],
-            "disks": list_physical_disks(),
-        }
+        return [asdict(row) for row in docker_rows], docker_error
+
+    cpu_model = get_cpu_model_name()
+
+    def full_snapshot() -> dict:
+        with snapshot_lock:
+            docker_rows, docker_error = cached("docker", 5.0, collect_docker)
+            return {
+                "system": cached("system", 0.4, system_snapshot),
+                "cpu_model": cpu_model,
+                "gpu": cached("gpu", 0.9, MonitoringHandler.monitor.poll),
+                "processes": cached("processes", 0.9, collect_processes),
+                "sensors": cached("sensors", 2.0, list_hardware_sensors),
+                "services": cached("services", 30.0, service_worker._fetch),
+                "docker": docker_rows,
+                "docker_error": docker_error,
+                "autostart": cached("autostart", 60.0, lambda: [
+                    asdict(entry) for entry in list_autostart_entries()]),
+                "disks": cached("disks", 10.0, list_physical_disks),
+            }
 
     MonitoringHandler.snapshot = full_snapshot
 
