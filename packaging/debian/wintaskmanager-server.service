@@ -1,0 +1,18 @@
+[Unit]
+Description=WinTaskManager monitoring server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/default/wintaskmanager-server
+ExecStart=/opt/wintaskmanager/venv/bin/python /opt/wintaskmanager/main.py --server --host ${HOST} --port ${PORT} --token ${TOKEN}
+# Root sees every process (users, memory) and can query docker and nvidia-smi.
+User=root
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+ProtectHome=read-only
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

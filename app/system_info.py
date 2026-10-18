@@ -12,6 +12,7 @@ import shlex
 import shutil
 import socket
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 
@@ -72,6 +73,14 @@ def _pcie_generation(speed_gt_s: float | None) -> str | None:
     return f"Gen {generations[closest]}"
 
 
+def _nvidia_float(value: str) -> float | None:
+    """nvidia-smi prints "[N/A]" / "[Not Supported]" for fields an older GPU lacks."""
+    try:
+        return float(value)
+    except ValueError:
+        return None
+
+
 def _nvidia_rate_mb_s(value: str) -> float | None:
     match = re.search(r"([0-9]+(?:\.[0-9]+)?)", value)
     return float(match.group(1)) if match else None
@@ -80,6 +89,41 @@ def _nvidia_rate_mb_s(value: str) -> float | None:
 GPU_ENGINE_METRICS = ["3D", "Compute", "Kopieren", "Video-Encode", "Video-Decode",
                       "JPEG", "Speicher-Controller"]
 
+
+
+class PausableWorker(QThread):
+    """Polling thread that can be paused while its page is hidden and woken
+    immediately for a fresh reading, instead of sleeping a full interval."""
+
+    def __init__(self, interval: float, parent=None):
+        super().__init__(parent)
+        self._interval = interval
+        self._running = True
+        self._paused = False
+        self._wake = threading.Event()
+
+    def set_paused(self, paused: bool) -> None:
+        self._paused = paused
+        self._wake.set()
+
+    def stop(self) -> None:
+        self._running = False
+        self._wake.set()
+        self.wait(2000)
+        if self.isRunning():  # stuck in a slow subprocess call (docker, nvidia-smi)
+            self.terminate()
+            self.wait(200)
+
+    def _sleep(self) -> None:
+        self._wake.wait(self._interval)
+        self._wake.clear()
+
+    def _wait_while_paused(self) -> bool:
+        """Block while paused; returns False once the worker should exit."""
+        while self._paused and self._running:
+            self._wake.wait()
+            self._wake.clear()
+        return self._running
 
 class GpuMonitor:
     """Best-effort per-process GPU usage (core % + VRAM in MB).
@@ -95,6 +139,10 @@ class GpuMonitor:
         self._nvidia = _NVIDIA_SMI
         self._prev_busy: dict[int, tuple[float, int]] = {}
         self._backend_available = bool(self._nvidia) or self._probe_drm_fdinfo()
+        # Older GeForce cards (e.g. Fermi on the 390 driver) don't support pmon or
+        # per-process queries; stop spawning nvidia-smi for them after one failure.
+        self._pmon_ok = True
+        self._compute_apps_ok = True
 
     def available(self) -> bool:
         return self._backend_available
@@ -129,10 +177,14 @@ class GpuMonitor:
     def _poll_nvidia(self) -> dict[int, dict]:
         usage: dict[int, dict] = {}
         try:
+            if not self._pmon_ok:
+                raise OSError("pmon not supported")
             out = subprocess.check_output(
                 [self._nvidia, "pmon", "-c", "1", "-s", "u"],
                 text=True, encoding="utf-8", errors="replace", timeout=3, stderr=subprocess.DEVNULL,
             )
+            if "not supported" in out.lower():
+                self._pmon_ok = False
             for line in out.splitlines():
                 if not line or line.startswith("#"):
                     continue
@@ -147,15 +199,21 @@ class GpuMonitor:
                 usage.setdefault(pid, {})["gpu_percent"] = (
                     float(sm) if sm.replace(".", "", 1).isdigit() else 0.0
                 )
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        except subprocess.CalledProcessError:
+            self._pmon_ok = False
+        except (subprocess.TimeoutExpired, OSError):
             pass
 
         try:
+            if not self._compute_apps_ok:
+                raise OSError("compute-apps not supported")
             out = subprocess.check_output(
                 [self._nvidia, "--query-compute-apps=pid,used_memory",
                  "--format=csv,noheader,nounits"],
                 text=True, encoding="utf-8", errors="replace", timeout=3, stderr=subprocess.DEVNULL,
             )
+            if "not supported" in out.lower():
+                self._compute_apps_ok = False
             for line in out.splitlines():
                 parts = [p.strip() for p in line.split(",")]
                 if len(parts) != 2:
@@ -166,7 +224,9 @@ class GpuMonitor:
                 except ValueError:
                     continue
                 usage.setdefault(pid, {})["vram_mb"] = vram_mb
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        except subprocess.CalledProcessError:
+            self._compute_apps_ok = False
+        except (subprocess.TimeoutExpired, OSError):
             pass
         return usage
 
@@ -288,6 +348,10 @@ class GpuSystemMonitor:
         self._card_path = None if self._nvidia else self._find_card()
         self._prev_engine_busy: dict[str, int] = {}
         self._prev_engine_time: float | None = None
+        # Remember which nvidia-smi queries the GPU/driver can't answer, so they
+        # aren't retried (each nvidia-smi start is expensive) on every poll.
+        self._full_query_ok = True
+        self._dmon_ok = True
         # Name / driver / PCI location never change, so they are read only once.
         self._static_info = (self._nvidia_static_info() if self._nvidia
                              else self._sysfs_static_info() if self._card_path else {})
@@ -362,6 +426,8 @@ class GpuSystemMonitor:
         return info
 
     def _poll_nvidia(self) -> dict | None:
+        if not self._full_query_ok:
+            return self._poll_nvidia_legacy()
         try:
             out = subprocess.check_output(
                 [self._nvidia,
@@ -387,9 +453,11 @@ class GpuSystemMonitor:
                     "rx_mb_s": _nvidia_rate_mb_s(rx_util),
                 },
             }
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError,
-                IndexError, ValueError):
+        except (subprocess.CalledProcessError, IndexError, ValueError):
+            self._full_query_ok = False  # older driver/GPU: PCIe fields unsupported
             return self._poll_nvidia_legacy()
+        except (subprocess.TimeoutExpired, OSError):
+            return None
         result["engines"] = self._poll_nvidia_engines()
         return result
 
@@ -406,13 +474,14 @@ class GpuSystemMonitor:
             name, util, mem_used, mem_total, temp, power = (
                 p.strip() for p in out.splitlines()[0].split(",")
             )
+            # Fields an old GeForce can't report (utilization, power) become None.
             result = {
                 "name": name,
-                "percent": float(util),
-                "vram_used_mb": float(mem_used),
-                "vram_total_mb": float(mem_total),
-                "temp_c": float(temp),
-                "power_w": float(power),
+                "percent": _nvidia_float(util),
+                "vram_used_mb": _nvidia_float(mem_used),
+                "vram_total_mb": _nvidia_float(mem_total),
+                "temp_c": _nvidia_float(temp),
+                "power_w": _nvidia_float(power),
                 "pcie": {},
             }
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError,
@@ -422,6 +491,8 @@ class GpuSystemMonitor:
         return result | {"gtt_used_mb": None, "gtt_total_mb": None}
 
     def _poll_nvidia_engines(self) -> dict[str, float]:
+        if not self._dmon_ok:
+            return {}
         try:
             out = subprocess.check_output(
                 [self._nvidia, "dmon", "-c", "1", "-s", "u"],
@@ -438,8 +509,11 @@ class GpuSystemMonitor:
                     "3D": float(sm), "Speicher-Controller": float(mem),
                     "Video-Encode": float(enc), "Video-Decode": float(dec),
                 }
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError, ValueError):
+        except (subprocess.CalledProcessError, ValueError):
             pass
+        except (subprocess.TimeoutExpired, OSError):
+            return {}
+        self._dmon_ok = False  # no usable dmon output (e.g. "-" columns on old GPUs)
         return {}
 
     def _poll_sysfs_engines(self) -> dict[str, float]:
@@ -553,28 +627,19 @@ class GpuSystemMonitor:
         return "GPU"
 
 
-class GpuSystemWorker(QThread):
+class GpuSystemWorker(PausableWorker):
     """Poll overall GPU statistics without blocking the Qt UI thread."""
 
     snapshotReady = Signal(object)
 
     def __init__(self, interval: float = 0.5, parent=None):
-        super().__init__(parent)
-        self._interval = interval
-        self._running = True
+        super().__init__(interval, parent)
         self._monitor = GpuSystemMonitor()
 
-    def stop(self) -> None:
-        self._running = False
-        self.wait(200)
-        if self.isRunning():
-            self.terminate()
-            self.wait(200)
-
     def run(self) -> None:
-        while self._running:
+        while self._wait_while_paused():
             self.snapshotReady.emit(self._monitor.poll())
-            time.sleep(self._interval)
+            self._sleep()
 
 
 class CpuPowerMonitor:
@@ -1111,24 +1176,18 @@ class ProcessRow:
     gpu_vram_mb: float | None = None
 
 
-class ProcessWorker(QThread):
-    """Polls all processes in a background thread and emits ready-to-display rows."""
+class ProcessWorker(PausableWorker):
+    """Polls all processes in a background thread and emits ready-to-display rows.
+    While paused (process tab hidden) only the cheap process/thread counts for the
+    status bar are collected; per-process details and GPU usage are skipped."""
 
     rowsReady = Signal(list)
+    statsReady = Signal(int, int)
 
     def __init__(self, interval: float = 1.0, parent=None):
-        super().__init__(parent)
-        self._interval = interval
-        self._running = True
+        super().__init__(interval, parent)
         self._procs: dict[int, psutil.Process] = {}
         self._gpu_monitor = GpuMonitor()
-
-    def stop(self) -> None:
-        self._running = False
-        self.wait(200)
-        if self.isRunning():
-            self.terminate()
-            self.wait(200)
 
     def run(self) -> None:
         # Prime cpu_percent() for every currently running process so the first
@@ -1145,9 +1204,20 @@ class ProcessWorker(QThread):
 
         while self._running:
             self._sync_process_table()
-            rows = self._collect_rows()
-            self.rowsReady.emit(rows)
-            time.sleep(self._interval)
+            if self._paused:
+                self.statsReady.emit(len(self._procs), self._count_threads())
+            else:
+                self.rowsReady.emit(self._collect_rows())
+            self._sleep()
+
+    def _count_threads(self) -> int:
+        total = 0
+        for pid, proc in list(self._procs.items()):
+            try:
+                total += proc.num_threads()
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                self._procs.pop(pid, None)
+        return total
 
     def _sync_process_table(self) -> None:
         current_pids = set(psutil.pids())
@@ -1258,7 +1328,7 @@ def _parse_mem_to_mb(value: str) -> float:
     return float(number) * _MEM_UNIT_FACTORS_MB.get(unit, 1.0)
 
 
-class DockerWorker(QThread):
+class DockerWorker(PausableWorker):
     """Polls `docker ps` / `docker stats` in a background thread so the Docker tab
     never blocks the UI. Emits `unavailable` once if the docker CLI is missing or
     the daemon can't be reached (e.g. no permission / daemon not running)."""
@@ -1267,33 +1337,21 @@ class DockerWorker(QThread):
     unavailable = Signal(str)
 
     def __init__(self, interval: float = 2.0, parent=None):
-        super().__init__(parent)
-        self._interval = interval
-        self._running = True
+        super().__init__(interval, parent)
         self._docker = shutil.which("docker")
         self._gpu_monitor = GpuMonitor()
-
-    def stop(self) -> None:
-        self._running = False
-        self.wait(200)
-        if self.isRunning():
-            self.terminate()
-            self.wait(200)
 
     def run(self) -> None:
         if not self._docker:
             self.unavailable.emit("Docker ist nicht installiert oder nicht im PATH.")
             return
-        while self._running:
+        while self._wait_while_paused():
             rows, error = self._collect_rows()
             if error:
                 self.unavailable.emit(error)
                 return
             self.rowsReady.emit(rows)
-            for _ in range(max(1, int(self._interval * 10))):
-                if not self._running:
-                    return
-                time.sleep(0.1)
+            self._sleep()
 
     def _collect_rows(self) -> tuple[list[DockerContainerRow], str]:
         if not self._docker:

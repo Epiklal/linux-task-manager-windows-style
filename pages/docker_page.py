@@ -202,13 +202,21 @@ class DockerPage(QWidget):
         self._interval = 2.0
         self.worker: DockerWorker | None = None
         self._remote_rows = None
+        self._active = False
         self._start_worker()
 
     def _start_worker(self) -> None:
         self.worker = DockerWorker(interval=self._interval, parent=self)
         self.worker.rowsReady.connect(self._on_rows_ready)
         self.worker.unavailable.connect(self._on_unavailable)
+        self.worker.set_paused(not self._active)
         self.worker.start()
+
+    def set_active(self, active: bool) -> None:
+        """`docker ps`/`docker stats` are expensive: only poll while the tab is visible."""
+        self._active = active
+        if self.worker is not None:
+            self.worker.set_paused(not active)
 
     def set_remote_docker(self, rows: list[dict] | None, error: str = "") -> None:
         self._remote_rows = rows

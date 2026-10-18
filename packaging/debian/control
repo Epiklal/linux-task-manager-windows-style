@@ -1,0 +1,16 @@
+Package: wintaskmanager
+Version: @VERSION@
+Section: utils
+Priority: optional
+Architecture: all
+Maintainer: ketchupboy <epiklal522@gmail.com>
+Depends: python3 (>= 3.10), python3-venv, python3-pip, libegl1, libgl1, libxkbcommon0, libfontconfig1, libdbus-1-3, libxcb-cursor0
+Recommends: smartmontools, lm-sensors, dmidecode, pciutils
+Suggests: sysbench, fio, glmark2
+Description: Linux task manager in the style of Windows 10/11
+ Processes, performance graphs (CPU, RAM, disks, network, GPU), sensors,
+ services, Docker containers, autostart entries and benchmarks.
+ Can also run headless as a monitoring server for remote clients.
+ .
+ PySide6 and psutil are installed from PyPI into /opt/wintaskmanager/venv
+ during installation, so the installation needs internet access.

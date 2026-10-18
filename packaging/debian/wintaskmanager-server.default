@@ -1,0 +1,6 @@
+# Settings for wintaskmanager-server.service (headless monitoring server).
+# The client needs this token (Einstellungen -> Fernüberwachung).
+# Left empty, the package generates a random one on installation.
+TOKEN=
+HOST=0.0.0.0
+PORT=8765

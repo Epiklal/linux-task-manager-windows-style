@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from string import Template
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QAction, QActionGroup
 from PySide6.QtWidgets import (
     QApplication,
@@ -769,6 +769,7 @@ class MainWindow(QMainWindow):
                 self.settings.remote_token,
             )
         self.apply_theme(self.settings.theme)
+        self._update_page_activity()
 
     def _build_menu(self) -> None:
         """Datei / Optionen / Ansicht, like the Windows 10 Task Manager."""
@@ -827,6 +828,21 @@ class MainWindow(QMainWindow):
 
     def _on_tab_changed(self, index: int) -> None:
         self.processes_page.end_task_btn.setVisible(index == 0)
+        self._update_page_activity()
+
+    def _update_page_activity(self) -> None:
+        """Only let the visible page poll the system; hidden pages are paused."""
+        visible = not self.isMinimized()
+        current = self.tabs.currentIndex()
+        self.processes_page.set_active(visible and current == 0)
+        self.performance_page.set_active(visible)
+        self.sensors_page.set_active(visible and current == 2)
+        self.docker_page.set_active(visible and current == 4)
+
+    def changeEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        if event.type() == QEvent.WindowStateChange:
+            self._update_page_activity()
+        super().changeEvent(event)
 
     def apply_theme(self, theme: str) -> None:
         style = self.settings.style

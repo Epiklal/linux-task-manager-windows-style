@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+if [ "$1" = "remove" ] && [ -d /run/systemd/system ]; then
+    systemctl stop wintaskmanager-server 2>/dev/null || true
+    systemctl disable wintaskmanager-server 2>/dev/null || true
+fi
+# The venv is created by postinst, so dpkg doesn't know its files.
+if [ "$1" = "remove" ] || [ "$1" = "upgrade" ]; then
+    rm -rf /opt/wintaskmanager/venv
+    find /opt/wintaskmanager -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
+fi
+exit 0

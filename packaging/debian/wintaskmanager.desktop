@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Task-Manager
+Comment=Linux Task-Manager im Windows-Stil
+Exec=wintaskmanager
+Icon=utilities-system-monitor
+Terminal=false
+Categories=System;Monitor;
+StartupNotify=true
+GenericName=Systemüberwachung
+Keywords=CPU;RAM;Prozesse;System;Monitor;
