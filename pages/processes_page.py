@@ -562,10 +562,22 @@ class ProcessesPage(QWidget):
         layout.addWidget(self.table)
 
         self._interval = 1.0
+        self._active = True
+        self._start_worker()
+        self._remote_enabled = False
+
+    def _start_worker(self) -> None:
         self.worker = ProcessWorker(interval=self._interval, parent=self)
         self.worker.rowsReady.connect(self._on_rows_ready)
+        self.worker.statsReady.connect(self.statsChanged)
+        self.worker.set_paused(not self._active)
         self.worker.start()
-        self._remote_enabled = False
+
+    def set_active(self, active: bool) -> None:
+        """Only collect full per-process details while the tab is visible."""
+        self._active = active
+        if self.worker is not None:
+            self.worker.set_paused(not active)
 
     def _on_rows_ready(self, rows: list[ProcessRow]) -> None:
         # Keep the current selection (by PID) across the periodic refresh.
@@ -582,9 +594,7 @@ class ProcessesPage(QWidget):
             if self._remote_enabled:
                 self._remote_enabled = False
                 self._on_selection_changed()
-                self.worker = ProcessWorker(interval=self._interval, parent=self)
-                self.worker.rowsReady.connect(self._on_rows_ready)
-                self.worker.start()
+                self._start_worker()
             return
         if not self._remote_enabled:
             self._remote_enabled = True
@@ -705,6 +715,4 @@ class ProcessesPage(QWidget):
             return
         self._interval = seconds
         self.worker.stop()
-        self.worker = ProcessWorker(interval=seconds, parent=self)
-        self.worker.rowsReady.connect(self._on_rows_ready)
-        self.worker.start()
+        self._start_worker()

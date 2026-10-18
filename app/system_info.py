@@ -12,6 +12,7 @@ import shlex
 import shutil
 import socket
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 
@@ -80,6 +81,41 @@ def _nvidia_rate_mb_s(value: str) -> float | None:
 GPU_ENGINE_METRICS = ["3D", "Compute", "Kopieren", "Video-Encode", "Video-Decode",
                       "JPEG", "Speicher-Controller"]
 
+
+
+class PausableWorker(QThread):
+    """Polling thread that can be paused while its page is hidden and woken
+    immediately for a fresh reading, instead of sleeping a full interval."""
+
+    def __init__(self, interval: float, parent=None):
+        super().__init__(parent)
+        self._interval = interval
+        self._running = True
+        self._paused = False
+        self._wake = threading.Event()
+
+    def set_paused(self, paused: bool) -> None:
+        self._paused = paused
+        self._wake.set()
+
+    def stop(self) -> None:
+        self._running = False
+        self._wake.set()
+        self.wait(2000)
+        if self.isRunning():  # stuck in a slow subprocess call (docker, nvidia-smi)
+            self.terminate()
+            self.wait(200)
+
+    def _sleep(self) -> None:
+        self._wake.wait(self._interval)
+        self._wake.clear()
+
+    def _wait_while_paused(self) -> bool:
+        """Block while paused; returns False once the worker should exit."""
+        while self._paused and self._running:
+            self._wake.wait()
+            self._wake.clear()
+        return self._running
 
 class GpuMonitor:
     """Best-effort per-process GPU usage (core % + VRAM in MB).
@@ -553,28 +589,19 @@ class GpuSystemMonitor:
         return "GPU"
 
 
-class GpuSystemWorker(QThread):
+class GpuSystemWorker(PausableWorker):
     """Poll overall GPU statistics without blocking the Qt UI thread."""
 
     snapshotReady = Signal(object)
 
     def __init__(self, interval: float = 0.5, parent=None):
-        super().__init__(parent)
-        self._interval = interval
-        self._running = True
+        super().__init__(interval, parent)
         self._monitor = GpuSystemMonitor()
 
-    def stop(self) -> None:
-        self._running = False
-        self.wait(200)
-        if self.isRunning():
-            self.terminate()
-            self.wait(200)
-
     def run(self) -> None:
-        while self._running:
+        while self._wait_while_paused():
             self.snapshotReady.emit(self._monitor.poll())
-            time.sleep(self._interval)
+            self._sleep()
 
 
 class CpuPowerMonitor:
@@ -1111,24 +1138,18 @@ class ProcessRow:
     gpu_vram_mb: float | None = None
 
 
-class ProcessWorker(QThread):
-    """Polls all processes in a background thread and emits ready-to-display rows."""
+class ProcessWorker(PausableWorker):
+    """Polls all processes in a background thread and emits ready-to-display rows.
+    While paused (process tab hidden) only the cheap process/thread counts for the
+    status bar are collected; per-process details and GPU usage are skipped."""
 
     rowsReady = Signal(list)
+    statsReady = Signal(int, int)
 
     def __init__(self, interval: float = 1.0, parent=None):
-        super().__init__(parent)
-        self._interval = interval
-        self._running = True
+        super().__init__(interval, parent)
         self._procs: dict[int, psutil.Process] = {}
         self._gpu_monitor = GpuMonitor()
-
-    def stop(self) -> None:
-        self._running = False
-        self.wait(200)
-        if self.isRunning():
-            self.terminate()
-            self.wait(200)
 
     def run(self) -> None:
         # Prime cpu_percent() for every currently running process so the first
@@ -1145,9 +1166,20 @@ class ProcessWorker(QThread):
 
         while self._running:
             self._sync_process_table()
-            rows = self._collect_rows()
-            self.rowsReady.emit(rows)
-            time.sleep(self._interval)
+            if self._paused:
+                self.statsReady.emit(len(self._procs), self._count_threads())
+            else:
+                self.rowsReady.emit(self._collect_rows())
+            self._sleep()
+
+    def _count_threads(self) -> int:
+        total = 0
+        for pid, proc in list(self._procs.items()):
+            try:
+                total += proc.num_threads()
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                self._procs.pop(pid, None)
+        return total
 
     def _sync_process_table(self) -> None:
         current_pids = set(psutil.pids())
@@ -1258,7 +1290,7 @@ def _parse_mem_to_mb(value: str) -> float:
     return float(number) * _MEM_UNIT_FACTORS_MB.get(unit, 1.0)
 
 
-class DockerWorker(QThread):
+class DockerWorker(PausableWorker):
     """Polls `docker ps` / `docker stats` in a background thread so the Docker tab
     never blocks the UI. Emits `unavailable` once if the docker CLI is missing or
     the daemon can't be reached (e.g. no permission / daemon not running)."""
@@ -1267,33 +1299,21 @@ class DockerWorker(QThread):
     unavailable = Signal(str)
 
     def __init__(self, interval: float = 2.0, parent=None):
-        super().__init__(parent)
-        self._interval = interval
-        self._running = True
+        super().__init__(interval, parent)
         self._docker = shutil.which("docker")
         self._gpu_monitor = GpuMonitor()
-
-    def stop(self) -> None:
-        self._running = False
-        self.wait(200)
-        if self.isRunning():
-            self.terminate()
-            self.wait(200)
 
     def run(self) -> None:
         if not self._docker:
             self.unavailable.emit("Docker ist nicht installiert oder nicht im PATH.")
             return
-        while self._running:
+        while self._wait_while_paused():
             rows, error = self._collect_rows()
             if error:
                 self.unavailable.emit(error)
                 return
             self.rowsReady.emit(rows)
-            for _ in range(max(1, int(self._interval * 10))):
-                if not self._running:
-                    return
-                time.sleep(0.1)
+            self._sleep()
 
     def _collect_rows(self) -> tuple[list[DockerContainerRow], str]:
         if not self._docker:

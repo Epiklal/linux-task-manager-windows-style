@@ -957,3 +957,15 @@ class PerformancePage(QWidget):
     def set_refresh_interval(self, milliseconds: int) -> None:
         self.timer.setInterval(milliseconds)
 
+    def set_active(self, active: bool) -> None:
+        """Pause sampling while the window is minimized. The history graphs keep
+        running while only another tab is shown, like Windows does."""
+        if active and not self.timer.isActive():
+            self._prev_net = None  # avoid a rate spike from the paused gap
+            self._prev_disk_io.clear()
+            self.timer.start()
+        elif not active:
+            self.timer.stop()
+        if self._gpu_worker is not None:
+            self._gpu_worker.set_paused(not active)
+

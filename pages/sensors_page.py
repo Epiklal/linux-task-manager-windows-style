@@ -49,9 +49,15 @@ class SensorsPage(QWidget):
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh)
-        self.timer.start(1000)
         self._remote_sensors = None
         self.refresh()
+
+    def set_active(self, active: bool) -> None:
+        if active and not self.timer.isActive():
+            self.refresh()
+            self.timer.start(1000)
+        elif not active:
+            self.timer.stop()
 
     def refresh(self) -> None:
         sensors = self._remote_sensors if self._remote_sensors is not None else list_hardware_sensors()

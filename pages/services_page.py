@@ -124,6 +124,8 @@ class ServicesPage(QWidget):
 
     def shutdown(self) -> None:
         if self.worker is not None:
-            self.worker.terminate()
+            # One-shot listing: let it finish. terminate() on a thread running
+            # Python code crashes the interpreter.
+            self.worker.wait(3000)
             self.worker.deleteLater()
             self.worker = None
