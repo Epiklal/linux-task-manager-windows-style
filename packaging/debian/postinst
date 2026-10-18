@@ -1,0 +1,30 @@
+#!/bin/sh
+set -e
+APP=/opt/wintaskmanager
+DEFAULTS=/etc/default/wintaskmanager-server
+
+if [ "$1" = "configure" ]; then
+    echo "WinTaskManager: installiere PySide6/psutil nach $APP/venv (braucht Internet) ..."
+    python3 -m venv "$APP/venv"
+    "$APP/venv/bin/python" -m pip install --quiet --disable-pip-version-check \
+        -r "$APP/requirements.txt"
+
+    if grep -q '^TOKEN=$' "$DEFAULTS"; then
+        token="$("$APP/venv/bin/python" -c 'import secrets; print(secrets.token_urlsafe(24))')"
+        sed -i "s|^TOKEN=$|TOKEN=$token|" "$DEFAULTS"
+        chmod 600 "$DEFAULTS"
+    fi
+
+    if [ -d /run/systemd/system ]; then
+        systemctl daemon-reload || true
+        # Restart the server after an upgrade if it is enabled; never auto-enable it.
+        if systemctl is-active --quiet wintaskmanager-server; then
+            systemctl restart wintaskmanager-server || true
+        fi
+    fi
+
+    echo "Fertig. Start: 'wintaskmanager' oder Startmenü -> Task-Manager."
+    echo "Als Server: sudo systemctl enable --now wintaskmanager-server"
+    echo "Zugriffsschlüssel für den Client: sudo grep TOKEN $DEFAULTS"
+fi
+exit 0

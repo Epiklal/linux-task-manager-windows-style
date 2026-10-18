@@ -8,4 +8,4 @@ __pycache__/
 .idea/
 *.swp
 *.log
-.DS_Store
+.DS_Storepackaging/dist/
