@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import getpass
+import grp
+import os
 import shutil
 from pathlib import Path
 
@@ -147,7 +149,7 @@ class SettingsPage(QWidget):
         remote_form.addRow("Zugriffsschlüssel:", self.remote_token_edit)
         remote_form.addRow(self.remote_connect_button)
 
-        smart_box = QGroupBox("Hardwaredaten (SMART und Arbeitsspeicher)")
+        smart_box = QGroupBox("Hardwaredaten (SMART, Arbeitsspeicher, CPU-Leistung)")
         self.smart_setup_button = QPushButton("Hardwaredaten mit sudo einrichten")
         self.smart_setup_button.clicked.connect(self._setup_smart_access)
         self.smart_status = QLabel(self._smart_status_text())
@@ -256,7 +258,8 @@ class SettingsPage(QWidget):
                 "sudo ist nicht installiert - die Einrichtung benötigt sudo.")
             return
         helper_source = Path(__file__).resolve().parents[1] / "scripts" / "wintaskmanager-smartctl"
-        script = setup_script(str(helper_source), getpass.getuser())
+        group = grp.getgrgid(os.getgid()).gr_name
+        script = setup_script(str(helper_source), getpass.getuser(), group)
         command = terminal_command(script)
         if command is None or not QProcess.startDetached(command[0], command[1:]):
             # No known terminal emulator: show the commands so they can be run by hand.

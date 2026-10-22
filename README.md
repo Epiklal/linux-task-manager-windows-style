@@ -115,7 +115,15 @@ Hardwaredaten mit sudo einrichten** button additionally installs a small read-on
 helper (`/usr/local/libexec/wintaskmanager-smartctl`) and a matching sudo rule
 (`/etc/sudoers.d/wintaskmanager-smartctl`) so SMART and RAM data can be read
 without typing your password every time. The helper can only run `smartctl` on
-block devices and `dmidecode -t memory`.
+block devices and `dmidecode -t memory`. It also makes the CPU energy counters
+(RAPL, `/sys/class/powercap/intel-rapl*:*/energy_uj`, on Intel and AMD) readable
+for your user group, right away and on every boot through a udev rule
+(`/etc/udev/rules.d/99-wintaskmanager-rapl.rules`, works with systemd-udevd and
+eudev). Since Linux 5.10 the kernel makes them readable only by root (because of
+the PLATYPUS side channel), so without this the CPU power draw (and on Intel the
+iGPU power draw) shows *Keine Leseberechtigung*. On NixOS `/etc` is read-only: the
+setup unlocks the counters until the next reboot and prints the
+`services.udev.extraRules` line to add to `/etc/nixos/configuration.nix`.
 
 The button detects your package manager (apt, dnf, pacman, zypper, apk) and opens
 your terminal (e.g. Konsole, GNOME Terminal, Ptyxis, Xfce Terminal, kitty,
@@ -134,6 +142,12 @@ tmp="$(mktemp)"
 echo "$USER ALL=(root) NOPASSWD: /usr/local/libexec/wintaskmanager-smartctl *" > "$tmp"
 sudo visudo -cf "$tmp" && sudo install -m 0440 -o root -g root "$tmp" /etc/sudoers.d/wintaskmanager-smartctl
 rm -f "$tmp"
+# CPU power draw (RAPL) readable for your group, right away:
+sudo chgrp "$(id -gn)" /sys/class/powercap/intel-rapl*:*/energy_uj
+sudo chmod g+r /sys/class/powercap/intel-rapl*:*/energy_uj
+# ... and on every boot (not on NixOS, see above):
+echo "ACTION==\"add\", SUBSYSTEM==\"powercap\", KERNEL==\"intel-rapl*:*\", TEST==\"energy_uj\", RUN+=\"$(command -v chgrp) $(id -gn) /sys\$devpath/energy_uj\", RUN+=\"$(command -v chmod) g+r /sys\$devpath/energy_uj\"" | sudo tee /etc/udev/rules.d/99-wintaskmanager-rapl.rules
+sudo udevadm control --reload
 ```
 
 **Also used if present** (not installed by the script): `lspci` (package
@@ -201,11 +215,12 @@ rm -r ~/.config/WinTaskManager
 rm -r linux-task-manager-windows-style      # the project folder, including .venv
 ```
 
-If you used **Hardwaredaten mit sudo einrichten**, also remove the helper and
-its sudo rule:
+If you used **Hardwaredaten mit sudo einrichten**, also remove the helper, its
+sudo rule and the RAPL udev rule:
 
 ```bash
 sudo rm /etc/sudoers.d/wintaskmanager-smartctl /usr/local/libexec/wintaskmanager-smartctl
+sudo rm /etc/udev/rules.d/99-wintaskmanager-rapl.rules
 ```
 
 If you set up the server as a systemd service (see below), stop and remove it too:
@@ -506,10 +521,18 @@ than guessed.
 - **RAM speed and module temperature** need `dmidecode` (root, via the same helper)
   and a board that reports them.
 - **CPU power draw** appears only when the kernel exposes a compatible energy or
-  power sensor, such as RAPL, `amd_energy`, or Zenpower.
+  power sensor: RAPL (Intel since Sandy Bridge, AMD Zen; also the MMIO/TPMI
+  variants) or, as a fallback, Zenpower. All CPU packages are added up; the
+  whole-platform `psys` zone is skipped so nothing is counted twice. RAPL is
+  root-only since Linux 5.10; **Hardwaredaten mit sudo einrichten** makes it
+  readable for your user group. In a virtual machine there is usually no sensor.
 - **GPU** metrics use `nvidia-smi` for NVIDIA hardware and the Linux DRM/sysfs
   interface for AMD, Intel, and Nouveau drivers. Which engines are available depends
-  on the driver. The model name is read with `lspci`.
+  on the driver. The model name is read with `lspci`. Intel integrated graphics
+  have no own power sensor; their draw comes from the RAPL `uncore` zone (needs the
+  same setup as the CPU) and their utilization from the busiest engine. Old NVIDIA
+  cards (e.g. Fermi) report many values as *Not Supported* in `nvidia-smi`; those
+  fields stay empty. With the Nouveau driver `nvidia-smi` is not used.
 - **Per-process GPU usage** comes from `nvidia-smi` on NVIDIA and otherwise from the
   kernel's DRM fdinfo interface (amdgpu, i915, xe, nouveau).
 

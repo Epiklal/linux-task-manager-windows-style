@@ -18,15 +18,20 @@ from dataclasses import dataclass
 import psutil
 from PySide6.QtCore import QThread, Signal
 
-_NVIDIA_SMI = shutil.which("nvidia-smi")
+# A leftover nvidia-smi is useless while nouveau drives the card (no NVIDIA module).
+_NVIDIA_SMI = (shutil.which("nvidia-smi")
+               if os.path.isdir("/proc/driver/nvidia") or not os.path.isdir("/sys/module/nouveau")
+               else None)
 _SMART_HELPER = "/usr/local/libexec/wintaskmanager-smartctl"
 
 _DRM_CLIENT_ID_RE = re.compile(r"^drm-client-id:\s+(\d+)")
 _DRM_VRAM_RE = re.compile(r"^drm-memory-vram:\s+(\d+)\s+KiB")
-_DRM_ENGINE_RE = re.compile(r"^drm-engine-(\w+):\s+(\d+)\s+ns")
+_DRM_ENGINE_RE = re.compile(r"^drm-engine-([\w-]+):\s+(\d+)\s+ns")
+# amdgpu: gfx/compute/sdma/enc/dec/jpeg; i915 (Intel): render/copy/video/video-enhance.
 _GPU_ENGINE_LABELS = {
-    "gfx": "3D", "compute": "Compute", "sdma": "Kopieren", "dma": "Kopieren",
-    "enc": "Video-Encode", "dec": "Video-Decode", "jpeg": "JPEG",
+    "gfx": "3D", "render": "3D", "compute": "Compute", "sdma": "Kopieren", "dma": "Kopieren",
+    "copy": "Kopieren", "enc": "Video-Encode", "dec": "Video-Decode", "video": "Video-Decode",
+    "video-enhance": "Video-Verarbeitung", "jpeg": "JPEG",
 }
 
 
@@ -210,7 +215,7 @@ class GpuMonitor:
                         vram_kib += int(vram_match.group(1))
                         continue
                     engine_match = _DRM_ENGINE_RE.match(line)
-                    if engine_match and engine_match.group(1) in ("gfx", "compute"):
+                    if engine_match and engine_match.group(1) in ("gfx", "render", "compute"):
                         busy_ns += int(engine_match.group(2))
 
             if not found_drm:
@@ -275,10 +280,83 @@ def _lspci_gpu_name(slot: str) -> str | None:
     return f"{vendor} {model}".strip()
 
 
+RAPL_PERMISSION_HINT = "Keine Leseberechtigung (Einstellungen → Hardwaredaten einrichten)"
+_POWERCAP_BASE = "/sys/class/powercap"
+# Newer Intel CPUs expose the same package counters via MSR, MMIO and TPMI; the
+# MSR interface comes first so a package is not counted twice.
+_RAPL_INTERFACES = ("intel-rapl", "intel-rapl-mmio", "intel-rapl-tpmi")
+
+
+class _EnergyCounter:
+    """Watts from a cumulative energy counter in µJ (RAPL energy_uj, hwmon energyN_input)."""
+
+    def __init__(self, path: str, wrap_uj: int = 0):
+        self.path = path
+        self._wrap_uj = wrap_uj  # RAPL counters restart at max_energy_range_uj
+        self._prev: tuple[float, int] | None = None
+        self.permission_denied = False
+
+    def poll_watts(self) -> float | None:
+        """Average power since the previous call; None on the first call."""
+        try:
+            with open(self.path) as f:
+                energy_uj = int(f.read().strip())
+        except PermissionError:
+            # RAPL energy_uj is root-only since Linux 5.10 (PLATYPUS side channel).
+            self.permission_denied = True
+            return None
+        except (OSError, ValueError):
+            return None
+        self.permission_denied = False
+        now = time.monotonic()
+        prev, self._prev = self._prev, (now, energy_uj)
+        if prev is None or now <= prev[0]:
+            return None
+        delta = energy_uj - prev[1]
+        if delta < 0:  # the counter wrapped around
+            if not self._wrap_uj:
+                return None
+            delta += self._wrap_uj
+        return delta / 1_000_000 / (now - prev[0])
+
+
+def _rapl_counters(kind: str, base: str = _POWERCAP_BASE) -> list[_EnergyCounter]:
+    """One counter per socket for the RAPL zones named `kind` ("package", "uncore", …).
+
+    Intel and AMD Zen both use the intel-rapl powercap interface. Top-level zones
+    are package-N (or psys, the whole laptop platform on Skylake+, which is never
+    added on top); sub-zones like intel-rapl:0:1 are core, uncore (Intel
+    integrated graphics) and dram.
+    """
+    zones: dict[tuple[str | None, str], str] = {}
+    for interface in _RAPL_INTERFACES:
+        for zone_dir in sorted(glob.glob(f"{base}/{interface}:*")):
+            name = _read_sysfs_str(f"{zone_dir}/name") or ""
+            if not (name == kind or name.startswith(f"{kind}-")):
+                continue
+            if not os.path.exists(f"{zone_dir}/energy_uj"):
+                continue
+            package_dir = zone_dir.rsplit(":", 1)[0] if zone_dir.count(":") > 1 else zone_dir
+            zones.setdefault((_read_sysfs_str(f"{package_dir}/name"), name), zone_dir)
+    counters = []
+    for zone_dir in zones.values():
+        wrap = _read_sysfs_str(f"{zone_dir}/max_energy_range_uj") or ""
+        counters.append(_EnergyCounter(f"{zone_dir}/energy_uj", int(wrap) if wrap.isdigit() else 0))
+    return counters
+
+
+def _nvidia_float(value: str) -> float | None:
+    """nvidia-smi prints "[N/A]" / "[Not Supported]" for values old GeForce cards lack."""
+    try:
+        return float(value)
+    except ValueError:
+        return None
+
+
 class GpuSystemMonitor:
     """Best-effort overall (not per-process) GPU stats: utilization/VRAM/temp/power.
 
-    Uses `nvidia-smi` if present, else the AMD/Intel sysfs interface under
+    Uses `nvidia-smi` if present, else the AMD/Intel/nouveau sysfs interface under
     /sys/class/drm/cardN/device (gpu_busy_percent, mem_info_vram_*, hwmon
     temp/power). Cheap enough (plain file reads) to poll from the UI thread.
     """
@@ -286,6 +364,7 @@ class GpuSystemMonitor:
     def __init__(self):
         self._nvidia = _NVIDIA_SMI
         self._card_path = None if self._nvidia else self._find_card()
+        self._power_counter = self._find_power_counter() if self._card_path else None
         self._prev_engine_busy: dict[str, int] = {}
         self._prev_engine_time: float | None = None
         # Name / driver / PCI location never change, so they are read only once.
@@ -316,6 +395,16 @@ class GpuSystemMonitor:
             pass
         return max(candidates, default=((False, False, False, False), None))[1]
 
+    def _find_power_counter(self) -> _EnergyCounter | None:
+        """Energy counter for GPUs without a power sensor: Intel Arc (i915/xe hwmon
+        energy1_input) or Intel integrated graphics (RAPL uncore zone)."""
+        for energy_path in sorted(glob.glob(f"{self._card_path}/hwmon/hwmon*/energy1_input")):
+            return _EnergyCounter(energy_path)
+        is_intel_igpu = (_read_sysfs_str(f"{self._card_path}/vendor") == "0x8086"
+                         and os.path.basename(os.path.realpath(self._card_path)) == "0000:00:02.0")
+        uncore = _rapl_counters("uncore") if is_intel_igpu else []
+        return uncore[0] if len(uncore) == 1 else None
+
     def poll(self) -> dict | None:
         if self._nvidia:
             result = self._poll_nvidia()
@@ -323,6 +412,9 @@ class GpuSystemMonitor:
             result = self._poll_sysfs()
             if result is not None:
                 result["engines"] = self._poll_sysfs_engines()
+                if result["percent"] is None:
+                    # i915/xe/nouveau have no gpu_busy_percent: use the busiest engine.
+                    result["percent"] = min(100.0, max(result["engines"].values(), default=0.0))
         else:
             return None
         return (result | self._static_info) if result is not None else None
@@ -377,11 +469,11 @@ class GpuSystemMonitor:
             pcie_gen, pcie_width, max_gen, max_width, tx_util, rx_util = fields[6:]
             result = {
                 "name": name,
-                "percent": float(util),
-                "vram_used_mb": float(mem_used),
-                "vram_total_mb": float(mem_total),
-                "temp_c": float(temp),
-                "power_w": float(power),
+                "percent": _nvidia_float(util) or 0.0,
+                "vram_used_mb": _nvidia_float(mem_used),
+                "vram_total_mb": _nvidia_float(mem_total),
+                "temp_c": _nvidia_float(temp),
+                "power_w": _nvidia_float(power),
                 "pcie": _pcie_link_info(pcie_gen, pcie_width, max_gen, max_width) | {
                     "tx_mb_s": _nvidia_rate_mb_s(tx_util),
                     "rx_mb_s": _nvidia_rate_mb_s(rx_util),
@@ -408,11 +500,11 @@ class GpuSystemMonitor:
             )
             result = {
                 "name": name,
-                "percent": float(util),
-                "vram_used_mb": float(mem_used),
-                "vram_total_mb": float(mem_total),
-                "temp_c": float(temp),
-                "power_w": float(power),
+                "percent": _nvidia_float(util) or 0.0,
+                "vram_used_mb": _nvidia_float(mem_used),
+                "vram_total_mb": _nvidia_float(mem_total),
+                "temp_c": _nvidia_float(temp),
+                "power_w": _nvidia_float(power),
                 "pcie": {},
             }
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError,
@@ -498,7 +590,7 @@ class GpuSystemMonitor:
         return busy
 
     def _poll_sysfs(self) -> dict | None:
-        percent = self._read_float(f"{self._card_path}/gpu_busy_percent") or 0.0
+        percent = self._read_float(f"{self._card_path}/gpu_busy_percent")
         vram_used = self._read_float(f"{self._card_path}/mem_info_vram_used")
         vram_total = self._read_float(f"{self._card_path}/mem_info_vram_total")
         gtt_used = self._read_float(f"{self._card_path}/mem_info_gtt_used")
@@ -517,9 +609,15 @@ class GpuSystemMonitor:
                          or self._read_float(f"{hwmon_dir}/power1_input"))
             power_w = power_raw / 1_000_000 if power_raw is not None else None
             break
+        power_reason = None
+        if power_w is None and self._power_counter is not None:
+            power_w = self._power_counter.poll_watts()
+            if self._power_counter.permission_denied:
+                power_reason = RAPL_PERMISSION_HINT
         return {
             "name": self._read_name(),
             "percent": percent,
+            "power_reason": power_reason,
             "vram_used_mb": (vram_used / (1024 * 1024)) if vram_used is not None else None,
             "vram_total_mb": (vram_total / (1024 * 1024)) if vram_total is not None else None,
             "gtt_used_mb": (gtt_used / (1024 * 1024)) if gtt_used is not None else None,
@@ -579,35 +677,26 @@ class GpuSystemWorker(QThread):
 
 class CpuPowerMonitor:
     """Best-effort CPU package power draw via Linux RAPL (/sys/class/powercap).
-    Mainly available on Intel (and some AMD kernels via amd_energy). Returns
-    None when unavailable so the UI can show 'Nicht verfügbar' instead of 0.
+
+    Works on Intel (Sandy Bridge and newer) and AMD Zen, on every distro, as long
+    as energy_uj is readable (root-only since Linux 5.10, see hardware_setup).
+    The zenpower hwmon driver is only a fallback, so nothing is counted twice.
+    Returns None when unavailable so the UI can show a reason instead of 0.
     """
 
     def __init__(self):
-        self._paths = self._find_rapl_energy_paths()
-        self._hwmon_power_paths = self._find_hwmon_power_paths()
-        self._prev: dict[str, tuple[float, int]] = {}
+        self._counters = _rapl_counters("package")
+        self._hwmon_power_paths = [] if self._counters else self._find_hwmon_power_paths()
 
     def available(self) -> bool:
-        return bool(self._paths or self._hwmon_power_paths)
+        return bool(self._counters or self._hwmon_power_paths)
 
     def unavailable_reason(self) -> str:
+        if any(counter.permission_denied for counter in self._counters):
+            return RAPL_PERMISSION_HINT
+        if self.available():
+            return "Wird gemessen …"  # RAPL needs two samples for a rate
         return "Kein CPU-Leistungssensor vom Kernel bereitgestellt"
-
-    @staticmethod
-    def _find_rapl_energy_paths() -> list[str]:
-        base = "/sys/class/powercap"
-        paths = []
-        try:
-            for name in os.listdir(base):
-                if not re.match(r"^(?:intel-rapl|amd_energy):\d+$", name):
-                    continue  # skip sub-zones like intel-rapl:0:0 (cores/uncore)
-                energy_path = f"{base}/{name}/energy_uj"
-                if os.path.exists(energy_path):
-                    paths.append(energy_path)
-        except OSError:
-            pass
-        return paths
 
     @staticmethod
     def _find_hwmon_power_paths() -> list[str]:
@@ -624,28 +713,13 @@ class CpuPowerMonitor:
         return paths
 
     def poll_watts(self) -> float | None:
-        if not self._paths and not self._hwmon_power_paths:
-            return None
-        now = time.monotonic()
+        # Poll every counter, so each one keeps its previous sample up to date.
+        readings = [counter.poll_watts() for counter in self._counters]
+        watts = [value for value in readings if value is not None]
+        if watts:
+            return sum(watts)
         total_watts = 0.0
         got_any = False
-        for path in self._paths:
-            try:
-                with open(path) as f:
-                    energy_uj = int(f.read().strip())
-            except (OSError, ValueError):
-                continue
-            prev = self._prev.get(path)
-            self._prev[path] = (now, energy_uj)
-            if prev is None:
-                continue
-            prev_time, prev_energy = prev
-            dt = now - prev_time
-            delta = energy_uj - prev_energy
-            if dt <= 0 or delta < 0:  # counter wrapped or no time passed
-                continue
-            total_watts += (delta / 1_000_000) / dt
-            got_any = True
         for path in self._hwmon_power_paths:
             try:
                 with open(path) as f:

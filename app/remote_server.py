@@ -97,10 +97,12 @@ def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
                token: str | None = None) -> None:
     from app.system_info import (
         AutostartEntry,
+        CpuPowerMonitor,
         DockerWorker,
         GpuSystemMonitor,
         ProcessWorker,
         get_cpu_model_name,
+        get_cpu_temperature,
         list_physical_disks,
         list_autostart_entries,
         list_hardware_sensors,
@@ -114,15 +116,25 @@ def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
     process_worker = ProcessWorker()
     docker_worker = DockerWorker()
     service_worker = ServiceListWorker()
+    cpu_power_monitor = CpuPowerMonitor()
+    # Power is the energy delta between two polls; parallel requests must not interleave.
+    power_lock = threading.Lock()
 
     def full_snapshot() -> dict:
         process_worker._sync_process_table()
         processes = [asdict(row) for row in process_worker._collect_rows()]
         docker_rows, docker_error = docker_worker._collect_rows()
+        with power_lock:
+            gpu = MonitoringHandler.monitor.poll()
+            cpu_power = cpu_power_monitor.poll_watts()
+            cpu_power_reason = cpu_power_monitor.unavailable_reason()
         return {
             "system": system_snapshot(),
             "cpu_model": get_cpu_model_name(),
-            "gpu": MonitoringHandler.monitor.poll(),
+            "cpu_temp_c": get_cpu_temperature(),
+            "cpu_power_w": cpu_power,
+            "cpu_power_reason": cpu_power_reason,
+            "gpu": gpu,
             "processes": processes,
             "sensors": list_hardware_sensors(),
             "services": service_worker._fetch(),

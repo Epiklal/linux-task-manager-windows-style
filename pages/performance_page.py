@@ -697,6 +697,12 @@ class PerformancePage(QWidget):
         cpu_freq_ghz = (snap["cpu_freq_mhz"] or 0) / 1000
         cpu_temp = get_cpu_temperature()
         cpu_power = self._cpu_power_monitor.poll_watts()
+        cpu_power_reason = self._cpu_power_monitor.unavailable_reason()
+        if self._remote_snapshot is not None:
+            # Temperature and power belong to the monitored server, not this PC.
+            cpu_temp = self._remote_snapshot.get("cpu_temp_c")
+            cpu_power = self._remote_snapshot.get("cpu_power_w")
+            cpu_power_reason = self._remote_snapshot.get("cpu_power_reason") or "Nicht verfügbar"
         cpu_model = (
             (self._remote_snapshot or {}).get("cpu_model") or self._cpu_model
         )
@@ -710,7 +716,7 @@ class PerformancePage(QWidget):
                 f"Logische Prozessoren: {snap['cpu_cores_logical']}<br>"
                 f"Temperatur: {_format_or_na(cpu_temp, '.0f', '°C')}<br>"
                 f"Leistungsaufnahme: "
-                f"{_format_or_na(cpu_power, '.1f', ' W') if cpu_power is not None else self._cpu_power_monitor.unavailable_reason()}<br>"
+                f"{_format_or_na(cpu_power, '.1f', ' W') if cpu_power is not None else cpu_power_reason}<br>"
                 f"Prozesse: {snap['process_count']}<br>"
                 f"Betriebszeit: {_format_uptime(snap['uptime_seconds'])}",
             ),
@@ -878,7 +884,9 @@ class PerformancePage(QWidget):
                if pcie.get("rx_mb_s") is not None else "")
             + (f"PCIe-Senden: {pcie['tx_mb_s']:.1f} MB/s<br>"
                if pcie.get("tx_mb_s") is not None else "")
-            + f"Leistungsaufnahme: {_format_or_na(gpu.get('power_w'), '.1f', ' W')}"
+            + "Leistungsaufnahme: "
+            + (f"{gpu['power_w']:.1f} W" if gpu.get("power_w") is not None
+               else gpu.get("power_reason") or "Nicht verfügbar")
         )
 
     def _update_gpu_graphs(self, gpu: dict | None, gpu_percent: float) -> None:
