@@ -9,9 +9,17 @@ and with the common terminal emulators.
 """
 from __future__ import annotations
 
+import os
 import shlex
 import shutil
 
+# Installed by the distribution packages: the .deb (build-deb.sh) under /usr/libexec,
+# the Arch package (packaging/arch/PKGBUILD) under /usr/lib. Packages stay out of
+# /usr/local, so the manual setup uses a different path.
+PACKAGED_HELPERS = (
+    "/usr/libexec/wintaskmanager/wintaskmanager-smartctl",
+    "/usr/lib/wintaskmanager/wintaskmanager-smartctl",
+)
 HELPER_TARGET = "/usr/local/libexec/wintaskmanager-smartctl"
 SUDOERS_TARGET = "/etc/sudoers.d/wintaskmanager-smartctl"
 RAPL_UDEV_TARGET = "/etc/udev/rules.d/99-wintaskmanager-rapl.rules"
@@ -45,6 +53,15 @@ _TERMINALS = [
     ("wezterm", ["start", "--"]),
     ("xterm", ["-e"]),
 ]
+
+
+def helper_path() -> str:
+    """The privileged helper to run via sudo: the packaged one if installed, otherwise
+    the one the in-app setup copies to /usr/local."""
+    for candidate in PACKAGED_HELPERS:
+        if os.access(candidate, os.X_OK):
+            return candidate
+    return HELPER_TARGET
 
 
 def package_install_command() -> str | None:
@@ -114,7 +131,14 @@ def _rapl_steps(group: str) -> list[str]:
 def setup_script(helper_source: str, username: str, group: str) -> str:
     """Bash script for the setup. The sudo rule is syntax-checked *before* it is
     installed, so a broken rule can never lock the user out of sudo."""
-    rule = f"{username} ALL=(root) NOPASSWD: {HELPER_TARGET} *"
+    helper = helper_path()
+    rule = f"{username} ALL=(root) NOPASSWD: {helper} *"
+    if helper in PACKAGED_HELPERS:
+        # The distribution package already ships the helper - only the sudo rule is missing.
+        helper_step = "true"
+    else:
+        helper_step = ("sudo install -d -m 0755 /usr/local/libexec"
+                       f" && sudo install -m 0755 {shlex.quote(helper_source)} {HELPER_TARGET}")
     install_packages = package_install_command()
     if install_packages:
         packages_step = (
@@ -129,8 +153,7 @@ def setup_script(helper_source: str, username: str, group: str) -> str:
         packages_step,
         'tmp="$(mktemp)"',
         f"printf '%s\\n' {shlex.quote(rule)} > \"$tmp\"",
-        "if sudo install -d -m 0755 /usr/local/libexec"
-        f" && sudo install -m 0755 {shlex.quote(helper_source)} {HELPER_TARGET}"
+        f"if {helper_step}"
         ' && sudo visudo -cf "$tmp"'
         f' && sudo install -m 0440 -o root -g root "$tmp" {SUDOERS_TARGET}; then',
         "    echo; echo 'Fertig: SMART- und RAM-Daten können jetzt gelesen werden.'",

@@ -1,0 +1,60 @@
+#!/bin/sh
+# Richtet PySide6/psutil für den Task-Manager ein. Wird von postinst aufgerufen,
+# kann aber jederzeit von Hand wiederholt werden:
+#     sudo /usr/libexec/wintaskmanager/setup-venv
+#
+# Debian liefert PySide6 als Systempakete (python3-pyside6.*), Ubuntu und
+# Linux Mint nicht. Fehlen sie, entsteht eine virtuelle Umgebung unter
+# /opt/wintaskmanager/venv, in die pip PySide6-Essentials lädt. Der Starter
+# /usr/bin/wintaskmanager nimmt automatisch die passende Python-Umgebung.
+set -e
+
+VENV=/opt/wintaskmanager/venv
+PYTHON=/usr/bin/python3
+CHECK='import PySide6, PySide6.QtCore, PySide6.QtGui, PySide6.QtWidgets, psutil
+import sys; sys.exit(PySide6.__version_info__ < (6, 6))'
+
+say() { echo "wintaskmanager: $*"; }
+
+if [ -x "$VENV/bin/python" ] && "$VENV/bin/python" -c "$CHECK" 2>/dev/null; then
+    say "PySide6 ist in $VENV vorhanden."
+    exit 0
+fi
+if "$PYTHON" -c "$CHECK" 2>/dev/null; then
+    say "PySide6 ist als Systempaket vorhanden."
+    rm -rf "$VENV"
+    exit 0
+fi
+
+say "Keine PySide6-Systempakete gefunden (normal auf Ubuntu/Linux Mint)."
+say "Lege virtuelle Umgebung $VENV an und lade PySide6 (~100 MB) herunter ..."
+rm -rf "$VENV"
+mkdir -p /opt/wintaskmanager
+if ! "$PYTHON" -m venv --system-site-packages "$VENV"; then
+    say "FEHLER: 'python3 -m venv' schlug fehl. Fehlt das Paket python3-venv?" >&2
+    rm -rf "$VENV"
+    exit 1
+fi
+
+export PIP_ROOT_USER_ACTION=ignore PIP_DISABLE_PIP_VERSION_CHECK=1
+if ! "$VENV/bin/python" -m pip install --no-cache-dir "PySide6-Essentials>=6.6,<7" "psutil>=5.9"; then
+    cat >&2 <<MSG
+
+wintaskmanager: FEHLER - PySide6 konnte nicht heruntergeladen werden.
+  Dafür wird eine Internetverbindung zu pypi.org benötigt (Proxy? Offline?).
+  Danach die Einrichtung einfach wiederholen:
+      sudo dpkg --configure -a
+  oder direkt:
+      sudo /usr/libexec/wintaskmanager/setup-venv
+
+MSG
+    rm -rf "$VENV"
+    exit 1
+fi
+
+if ! "$VENV/bin/python" -c "$CHECK"; then
+    say "FEHLER: PySide6 wurde installiert, lässt sich aber nicht laden (siehe Meldung oben)." >&2
+    rm -rf "$VENV"
+    exit 1
+fi
+say "Fertig - PySide6 $("$VENV/bin/python" -c 'import PySide6; print(PySide6.__version__)') in $VENV."

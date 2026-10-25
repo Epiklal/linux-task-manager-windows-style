@@ -1,0 +1,83 @@
+# Baut das Debian-Paket und hängt es bei einem Tag "v*" an ein GitHub-Release.
+# Jeder Push auf main und jeder manuelle Start bauen und testen ebenfalls,
+# legen das Paket aber nur als Workflow-Artefakt ab.
+name: Build .deb
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  deb:
+    name: Build, test and publish
+    runs-on: ubuntu-latest
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      MAINTAINER: "${{ github.repository_owner }} <${{ github.repository_owner }}@users.noreply.github.com>"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install lintian
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends lintian
+
+      - name: Build package
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            ./build-deb.sh "${GITHUB_REF_NAME#v}"
+          else
+            ./build-deb.sh
+          fi
+          ls -l dist/
+          dpkg-deb --info dist/*.deb
+
+      # ubuntu-latest hat wie Linux Mint keine PySide6-Systempakete: hier wird der
+      # Weg über /opt/wintaskmanager/venv (Download von PyPI) mitgetestet.
+      - name: Install package (smoke test)
+        run: |
+          sudo apt-get install -y ./dist/*.deb
+          test -x /usr/bin/wintaskmanager
+          test -f /usr/lib/systemd/system/wintaskmanager-server.service
+
+      - name: Start the application headless
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          wintaskmanager --server --help
+          set +e
+          timeout -s KILL 20 wintaskmanager
+          rc=$?
+          set -e
+          # 137 = nach 20 s noch gelaufen (von timeout beendet), alles andere = Absturz
+          test "$rc" -eq 137 || { echo "wintaskmanager beendete sich mit Code $rc"; exit 1; }
+
+      - name: Remove package again
+        run: |
+          sudo apt-get purge -y wintaskmanager
+          test ! -e /opt/wintaskmanager
+          test ! -e /usr/share/wintaskmanager
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wintaskmanager-deb
+          path: dist/*.deb
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/*.deb --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/*.deb \
+              --title "WinTaskManager $GITHUB_REF_NAME" --generate-notes
+          fi

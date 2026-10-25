@@ -4,13 +4,13 @@ from __future__ import annotations
 import shutil
 import subprocess
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
     QHeaderView,
+    QLabel,
     QLineEdit,
-    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -18,28 +18,34 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.system_info import StoppableWorker, WorkerStopped
+
 COLUMNS = ["Name", "Beschreibung", "Status"]
 
 
-class ServiceListWorker(QThread):
+class ServiceListWorker(StoppableWorker):
     servicesReady = Signal(list)
 
     def run(self) -> None:
-        services = self._fetch()
-        self.servicesReady.emit(services)
+        try:
+            services = self._fetch()
+        except WorkerStopped:
+            return
+        if not self._stop_event.is_set():
+            self.servicesReady.emit(services)
 
     def _fetch(self) -> list[tuple[str, str, str]]:
         if not shutil.which("systemctl"):
             return []
         try:
-            output = subprocess.check_output(
+            output = self._run_command(
                 [
                     "systemctl", "list-units", "--type=service", "--all",
                     "--no-legend", "--no-pager", "--plain",
                 ],
-                text=True,
                 timeout=5,
-            )
+                check=True,
+            ).stdout
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
             return []
 
@@ -68,6 +74,13 @@ class ServicesPage(QWidget):
         top_bar.addStretch(1)
         top_bar.addWidget(self.refresh_btn)
 
+        # Shown instead of a modal dialog when there is nothing to list: without
+        # systemd (containers, Alpine, Devuan, ...) a dialog would pop up on every
+        # start and refresh, and headless (tests, offscreen) it would block forever.
+        self.hint_label = QLabel("Keine systemd-Dienste gefunden (systemctl nicht verfügbar).")
+        self.hint_label.setWordWrap(True)
+        self.hint_label.hide()
+
         self.table = QTableWidget(0, len(COLUMNS))
         self.table.setHorizontalHeaderLabels(COLUMNS)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -80,6 +93,7 @@ class ServicesPage(QWidget):
 
         layout = QVBoxLayout(self)
         layout.addLayout(top_bar)
+        layout.addWidget(self.hint_label)
         layout.addWidget(self.table)
 
         self._all_rows: list[tuple[str, str, str]] = []
@@ -99,18 +113,13 @@ class ServicesPage(QWidget):
 
     def _on_services_ready(self, rows: list[tuple[str, str, str]]) -> None:
         self._all_rows = rows
-        if not rows:
-            QMessageBox.information(
-                self, "Dienste",
-                "Keine systemd-Dienste gefunden (systemctl nicht verfügbar)."
-            )
+        self.hint_label.setVisible(not rows)
         self._apply_filter(self.search_box.text())
 
     def set_remote_services(self, rows: list | None) -> None:
         self._remote_rows = rows
-        if rows is not None and self.worker is not None and self.worker.isRunning():
-            self.worker.terminate()
         if rows is not None:
+            self._stop_worker()
             self._on_services_ready(rows)
 
     def _apply_filter(self, text: str) -> None:
@@ -122,8 +131,13 @@ class ServicesPage(QWidget):
             self.table.setItem(row_idx, 1, QTableWidgetItem(desc))
             self.table.setItem(row_idx, 2, QTableWidgetItem(status))
 
+    def _stop_worker(self) -> None:
+        if self.worker is None:
+            return
+        self.worker.servicesReady.disconnect(self._on_services_ready)
+        self.worker.stop()
+        self.worker.deleteLater()
+        self.worker = None
+
     def shutdown(self) -> None:
-        if self.worker is not None:
-            self.worker.terminate()
-            self.worker.deleteLater()
-            self.worker = None
+        self._stop_worker()

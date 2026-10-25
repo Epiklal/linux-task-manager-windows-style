@@ -2,7 +2,7 @@
 files under ~/.config/autostart and /etc/xdg/autostart) and lets you enable/disable them."""
 from __future__ import annotations
 
-from PySide6.QtCore import QThread, Qt, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
@@ -15,7 +15,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.system_info import AutostartEntry, list_autostart_entries, set_autostart_enabled
+from app.system_info import (
+    AutostartEntry, StoppableWorker, list_autostart_entries, set_autostart_enabled,
+)
 from widgets.resizable_table import ResizableRowsTableWidget
 
 COLUMNS = ["Name", "Befehl", "Quelle", "Status"]
@@ -24,11 +26,13 @@ _DEFAULT_COLUMN_WIDTHS = [200, 320, 90, 100]
 
 _REMOTE_ACTION_HINT = "Im Remote-Modus zeigt diese Liste Daten des Servers. Aktionen würden auf diesem PC ausgeführt und sind deshalb gesperrt."
 
-class AutostartListWorker(QThread):
+class AutostartListWorker(StoppableWorker):
     entriesReady = Signal(list)
 
     def run(self) -> None:
-        self.entriesReady.emit(list_autostart_entries())
+        entries = list_autostart_entries()
+        if not self._stop_event.is_set():
+            self.entriesReady.emit(entries)
 
 
 class AutostartPage(QWidget):
@@ -97,9 +101,8 @@ class AutostartPage(QWidget):
 
     def set_remote_autostart(self, entries: list[dict] | None) -> None:
         self._remote_entries = entries
-        if entries is not None and self.worker is not None and self.worker.isRunning():
-            self.worker.terminate()
         if entries is not None:
+            self._stop_worker()
             self._on_entries_ready([AutostartEntry(**entry) for entry in entries])
 
     def _apply_filter(self, text: str) -> None:
@@ -144,8 +147,13 @@ class AutostartPage(QWidget):
             return
         self.refresh()
 
+    def _stop_worker(self) -> None:
+        if self.worker is None:
+            return
+        self.worker.entriesReady.disconnect(self._on_entries_ready)
+        self.worker.stop()
+        self.worker.deleteLater()
+        self.worker = None
+
     def shutdown(self) -> None:
-        if self.worker is not None:
-            self.worker.terminate()
-            self.worker.deleteLater()
-            self.worker = None
+        self._stop_worker()

@@ -1,0 +1,40 @@
+#!/bin/sh
+set -e
+
+UNIT=wintaskmanager-server.service
+
+case "$1" in
+    configure)
+        # Byte-compile wie dh_python3 (prerm räumt die .pyc-Dateien wieder weg).
+        if command -v py3compile >/dev/null 2>&1; then
+            py3compile -p wintaskmanager /usr/share/wintaskmanager \
+                || echo "Warnung: Byte-Compile fehlgeschlagen - das Programm läuft trotzdem." >&2
+        fi
+
+        # PySide6: Systempakete (Debian) oder virtuelle Umgebung per pip (Ubuntu/
+        # Linux Mint haben keine PySide6-Pakete). Schlägt das fehl - z. B. ohne
+        # Internet -, bleibt das Paket unkonfiguriert; "sudo dpkg --configure -a"
+        # wiederholt die Einrichtung.
+        /usr/libexec/wintaskmanager/setup-venv
+
+        if [ -d /run/systemd/system ]; then
+            systemctl --system daemon-reload >/dev/null 2>&1 || true
+        fi
+        # Der Dienst wird nicht automatisch aktiviert; ein vom Admin aktivierter Dienst
+        # bleibt bei Updates aktiviert und wird neu gestartet.
+        if command -v deb-systemd-helper >/dev/null 2>&1; then
+            if deb-systemd-helper debian-installed "$UNIT"; then
+                deb-systemd-helper unmask "$UNIT" >/dev/null || true
+                if deb-systemd-helper --quiet was-enabled "$UNIT"; then
+                    deb-systemd-helper enable "$UNIT" >/dev/null || true
+                fi
+            fi
+            deb-systemd-helper update-state "$UNIT" >/dev/null || true
+        fi
+        if [ -n "$2" ] && [ -d /run/systemd/system ] && command -v deb-systemd-invoke >/dev/null 2>&1; then
+            deb-systemd-invoke try-restart "$UNIT" >/dev/null || true
+        fi
+        ;;
+esac
+
+exit 0

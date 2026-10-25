@@ -1,0 +1,24 @@
+[Unit]
+Description=WinTaskManager Monitoring-Server (Fernüberwachung)
+Documentation=https://github.com/Epiklal/linux-task-manager-windows-style
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Zugriffsschlüssel, Port usw. stehen in /etc/default/wintaskmanager-server.
+EnvironmentFile=-/etc/default/wintaskmanager-server
+ExecStart=/usr/bin/wintaskmanager --server $WINTASKMANAGER_SERVER_OPTS
+Restart=on-failure
+RestartSec=5
+
+# Läuft unprivilegiert und abgeschottet. Damit der Server SMART-/RAM-Daten über die
+# sudo-Regel des Task-Managers lesen darf, stattdessen einen festen Benutzer eintragen:
+#     sudo systemctl edit wintaskmanager-server
+#     [Service]
+#     DynamicUser=no
+#     User=deinname
+DynamicUser=yes
+
+[Install]
+WantedBy=multi-user.target

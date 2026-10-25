@@ -1,0 +1,22 @@
+#!/bin/sh
+# Starter des Debian-Pakets: das Programm liegt in /usr/share/wintaskmanager.
+# Alle Argumente werden durchgereicht, z. B.  wintaskmanager --server --token ...
+#
+# PySide6 kommt entweder aus den Systempaketen (Debian) oder aus der virtuellen
+# Umgebung /opt/wintaskmanager/venv, die setup-venv bei der Installation anlegt
+# (Ubuntu/Linux Mint haben keine PySide6-Pakete). Geprüft wird nur, ob die Module
+# auffindbar sind - das kostet beim Start kaum Zeit.
+APP=/usr/share/wintaskmanager/main.py
+VENV=/opt/wintaskmanager/venv
+CHECK='import importlib.util, sys
+sys.exit(any(importlib.util.find_spec(m) is None for m in ("PySide6", "psutil")))'
+
+for py in "$VENV/bin/python" /usr/bin/python3; do
+    if [ -x "$py" ] && "$py" -c "$CHECK" 2>/dev/null; then
+        exec "$py" "$APP" "$@"
+    fi
+done
+
+echo "wintaskmanager: Die Python-Module PySide6/psutil fehlen." >&2
+echo "Bitte einmalig ausführen:  sudo /usr/libexec/wintaskmanager/setup-venv" >&2
+exit 1

@@ -562,34 +562,49 @@ class ProcessesPage(QWidget):
         layout.addWidget(self.table)
 
         self._interval = 1.0
+        self.worker: ProcessWorker | None = None
+        self._start_worker()
+        self._remote_enabled = False
+
+    def _start_worker(self) -> None:
         self.worker = ProcessWorker(interval=self._interval, parent=self)
         self.worker.rowsReady.connect(self._on_rows_ready)
         self.worker.start()
-        self._remote_enabled = False
+
+    def _stop_worker(self) -> None:
+        if self.worker is None:
+            return
+        self.worker.rowsReady.disconnect(self._on_rows_ready)
+        self.worker.stop()
+        self.worker.deleteLater()
+        self.worker = None
 
     def _on_rows_ready(self, rows: list[ProcessRow]) -> None:
-        # Keep the current selection (by PID) across the periodic refresh.
-        selected_pid = self._selected_pid()
-        memory_percent = None if self._remote_enabled else psutil.virtual_memory().percent
-        self.model.set_rows(rows, memory_percent)
-        if selected_pid is not None:
-            self._reselect_pid(selected_pid)
-        thread_count = sum(r.num_threads for r in rows)
-        self.statsChanged.emit(len(rows), thread_count)
+        try:
+            # Keep the current selection (by PID) across the periodic refresh.
+            selected_pid = self._selected_pid()
+            memory_percent = None if self._remote_enabled else psutil.virtual_memory().percent
+            self.model.set_rows(rows, memory_percent)
+            if selected_pid is not None:
+                self._reselect_pid(selected_pid)
+            thread_count = sum(r.num_threads for r in rows)
+            self.statsChanged.emit(len(rows), thread_count)
+        finally:
+            # Also after an exception, or the worker would never send rows again.
+            if self.worker is not None:
+                self.worker.mark_consumed()
 
     def set_remote_rows(self, rows: list[dict] | None) -> None:
         if rows is None:
             if self._remote_enabled:
                 self._remote_enabled = False
                 self._on_selection_changed()
-                self.worker = ProcessWorker(interval=self._interval, parent=self)
-                self.worker.rowsReady.connect(self._on_rows_ready)
-                self.worker.start()
+                self._start_worker()
             return
         if not self._remote_enabled:
             self._remote_enabled = True
             self._on_selection_changed()
-            self.worker.stop()
+            self._stop_worker()
         self._on_rows_ready([ProcessRow(**row) for row in rows])
 
     def _selected_pid(self) -> int | None:
@@ -695,16 +710,11 @@ class ProcessesPage(QWidget):
         return result[0] if isinstance(result, tuple) else result
 
     def shutdown(self) -> None:
-        if self.worker is not None:
-            self.worker.stop()
-            self.worker.deleteLater()
-            self.worker = None
+        self._stop_worker()
 
     def set_refresh_interval(self, seconds: float) -> None:
-        if seconds == self._interval:
-            return
+        # Change the running worker instead of replacing it: no thread restart per
+        # spin-box step, and no orphaned worker left behind.
         self._interval = seconds
-        self.worker.stop()
-        self.worker = ProcessWorker(interval=seconds, parent=self)
-        self.worker.rowsReady.connect(self._on_rows_ready)
-        self.worker.start()
+        if self.worker is not None:
+            self.worker.set_interval(seconds)

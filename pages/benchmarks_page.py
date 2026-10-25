@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import tempfile
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.system_info import list_physical_disks
+from app.system_info import StoppableWorker, WorkerStopped, list_physical_disks
 from app.remote_client import RemoteBenchmarkWorker
 
 _BENCHMARKS = {
@@ -58,7 +58,7 @@ def _writable_dir_on(mountpoint: str) -> str:
     raise ValueError(f"Keine Schreibrechte auf {mountpoint} - bitte ein anderes Ziel wählen")
 
 
-class BenchmarkWorker(QThread):
+class BenchmarkWorker(StoppableWorker):
     resultReady = Signal(str, str, str)
     finished = Signal()
 
@@ -73,6 +73,8 @@ class BenchmarkWorker(QThread):
 
     def run(self) -> None:
         for benchmark in self._benchmarks:
+            if self._stop_event.is_set():
+                return
             label, command = _BENCHMARKS[benchmark]
             if not shutil.which(command):
                 self.resultReady.emit(label, "Nicht verfügbar", f"{command} ist nicht installiert")
@@ -81,18 +83,20 @@ class BenchmarkWorker(QThread):
             try:
                 result, details = getattr(self, f"_run_{benchmark}")()
                 self.resultReady.emit(label, result, details)
+            except WorkerStopped:
+                return
             except (OSError, subprocess.SubprocessError, ValueError, KeyError) as error:
                 self.resultReady.emit(label, "Fehlgeschlagen", str(error))
         self.finished.emit()
 
     def _run_cpu(self) -> tuple[str, str]:
-        output = subprocess.check_output(
+        output = self._run_command(
             [
                 "sysbench", "cpu", f"--threads={self._cpu_threads}",
                 f"--cpu-max-prime={self._cpu_max_prime}", "--time=" + str(self._cpu_seconds),
                 "run",
-            ], text=True, timeout=self._cpu_seconds + 30,
-        )
+            ], timeout=self._cpu_seconds + 30, check=True,
+        ).stdout
         match = re.search(r"events per second:\s+([\d.]+)", output)
         if not match:
             raise ValueError("CPU-Ergebnis konnte nicht gelesen werden")
@@ -100,22 +104,20 @@ class BenchmarkWorker(QThread):
             f"sysbench CPU, {self._cpu_threads} Threads, {self._cpu_seconds} s, "
             f"Primzahlen bis {self._cpu_max_prime:,}")
 
-    @staticmethod
-    def _run_memory() -> tuple[str, str]:
-        output = subprocess.check_output(
+    def _run_memory(self) -> tuple[str, str]:
+        output = self._run_command(
             ["sysbench", "memory", "--memory-block-size=1M", "--memory-total-size=1G", "run"],
-            text=True, timeout=60,
-        )
+            timeout=60, check=True,
+        ).stdout
         match = re.search(r"\(([\d.]+) MiB/sec\)", output)
         if not match:
             raise ValueError("RAM-Ergebnis konnte nicht gelesen werden")
         return f"{float(match.group(1)):.0f} MiB/s", "sysbench Speicher, 1 GiB"
 
-    @staticmethod
-    def _run_gpu() -> tuple[str, str]:
-        output = subprocess.check_output(
-            ["glmark2", "--off-screen", "--benchmark", "refract"], text=True, timeout=40,
-        )
+    def _run_gpu(self) -> tuple[str, str]:
+        output = self._run_command(
+            ["glmark2", "--off-screen", "--benchmark", "refract"], timeout=40, check=True,
+        ).stdout
         match = re.search(r"glmark2 Score:\s*(\d+)", output)
         if not match:
             raise ValueError("GPU-Ergebnis konnte nicht gelesen werden")
@@ -128,14 +130,14 @@ class BenchmarkWorker(QThread):
         with tempfile.TemporaryDirectory(
             prefix="wintaskmanager-benchmark-", dir=work_dir,
         ) as temp_dir:
-            output = subprocess.check_output(
+            output = self._run_command(
                 [
                     "fio", "--name=read-test", "--directory=" + temp_dir,
                     "--rw=read", "--bs=1M", "--size=256M", "--time_based", "--runtime=10",
                     "--direct=0", "--group_reporting", "--output-format=json",
                 ],
-                text=True, timeout=45,
-            )
+                timeout=45, check=True,
+            ).stdout
         data = json.loads(output)
         bandwidth = data["jobs"][0]["read"]["bw_bytes"]
         return (f"{bandwidth / (1024 ** 2):.0f} MiB/s",
@@ -250,6 +252,8 @@ class BenchmarksPage(QWidget):
 
     def shutdown(self) -> None:
         if self.worker is not None:
-            self.worker.terminate()
+            self.worker.resultReady.disconnect(self._add_result)
+            self.worker.finished.disconnect(self._on_finished)
+            self.worker.stop()
             self.worker.deleteLater()
             self.worker = None

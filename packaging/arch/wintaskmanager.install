@@ -1,0 +1,31 @@
+# Installationshooks des Arch-Pakets (pacman führt sie nach dem Entpacken aus).
+
+post_install() {
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    cat <<'MSG'
+==> WinTaskManager: Start über "Task-Manager" im Startmenü oder  wintaskmanager  im Terminal.
+==> Fernüberwachung (optional):  sudo systemctl enable --now wintaskmanager-server
+    Zugriffsschlüssel und Port: /etc/default/wintaskmanager-server
+MSG
+}
+
+post_upgrade() {
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl try-restart wintaskmanager-server.service >/dev/null 2>&1 || true
+}
+
+pre_remove() {
+    systemctl disable --now wintaskmanager-server.service >/dev/null 2>&1 || true
+}
+
+post_remove() {
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    # Von der App angelegte Einrichtung (sudo-Regel für den Helfer, udev-Regel) mit entfernen.
+    if grep -qs '/usr/lib/wintaskmanager/' /etc/sudoers.d/wintaskmanager-smartctl; then
+        rm -f /etc/sudoers.d/wintaskmanager-smartctl
+    fi
+    rm -f /etc/udev/rules.d/99-wintaskmanager-rapl.rules
+    # Reste wie __pycache__ aus Läufen als root.
+    rm -rf /usr/share/wintaskmanager
+    rmdir /usr/lib/wintaskmanager 2>/dev/null || true
+}

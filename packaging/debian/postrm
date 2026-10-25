@@ -1,0 +1,38 @@
+#!/bin/sh
+set -e
+
+UNIT=wintaskmanager-server.service
+
+if [ -d /run/systemd/system ]; then
+    systemctl --system daemon-reload >/dev/null 2>&1 || true
+fi
+
+case "$1" in
+    remove)
+        if command -v deb-systemd-helper >/dev/null 2>&1; then
+            deb-systemd-helper mask "$UNIT" >/dev/null || true
+        fi
+        # Reste, falls ohne py3clean deinstalliert wurde.
+        find /usr/share/wintaskmanager -depth -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+        rmdir -p /usr/share/wintaskmanager/app /usr/share/wintaskmanager/pages \
+                 /usr/share/wintaskmanager/widgets 2>/dev/null || true
+        # Die von setup-venv angelegte virtuelle Umgebung (wird bei Bedarf neu erzeugt).
+        rm -rf /opt/wintaskmanager
+        ;;
+    purge)
+        if command -v deb-systemd-helper >/dev/null 2>&1; then
+            deb-systemd-helper purge "$UNIT" >/dev/null || true
+            deb-systemd-helper unmask "$UNIT" >/dev/null || true
+        fi
+        # Nur die sudo-Regel, die auf den paketierten Helfer zeigt; eine Regel für das
+        # Git-Checkout (/usr/local) gehört dem Benutzer.
+        if [ -f /etc/sudoers.d/wintaskmanager-smartctl ] \
+            && grep -q '/usr/libexec/wintaskmanager/' /etc/sudoers.d/wintaskmanager-smartctl; then
+            rm -f /etc/sudoers.d/wintaskmanager-smartctl
+        fi
+        rm -f /etc/udev/rules.d/99-wintaskmanager-rapl.rules
+        rm -rf /usr/share/wintaskmanager /opt/wintaskmanager
+        ;;
+esac
+
+exit 0

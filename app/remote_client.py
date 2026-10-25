@@ -1,7 +1,11 @@
 """Background client for the headless WinTaskManager server."""
 from __future__ import annotations
 
+import http.client
+import io
 import json
+import socket
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -68,23 +72,64 @@ class RemoteBenchmarkWorker(QThread):
             "cpu_threads": cpu_threads, "cpu_seconds": cpu_seconds,
             "cpu_max_prime": cpu_max_prime, "disk_directory": disk_directory,
         }
+        self._stop_event = threading.Event()
+        self._conn_lock = threading.Lock()
+        self._conn: http.client.HTTPConnection | None = None
+
+    def stop(self) -> None:
+        """End the thread without terminate(): shutting the socket down wakes the
+        blocked read, which otherwise waits up to 360 s for the server's result."""
+        self._stop_event.set()
+        with self._conn_lock:
+            if self._conn is not None and self._conn.sock is not None:
+                try:
+                    self._conn.sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+        self.wait()
+
+    def _post(self, body: bytes) -> dict:
+        conn = http.client.HTTPConnection(self.host, self.port, timeout=10)
+        try:
+            conn.connect()
+            conn.sock.settimeout(360)
+            with self._conn_lock:
+                if self._stop_event.is_set():
+                    return {}
+                self._conn = conn
+            conn.request("POST", "/api/v1/benchmark", body=body, headers={
+                "Content-Type": "application/json", "Authorization": f"Bearer {self.token}",
+            })
+            response = conn.getresponse()
+            data = response.read()
+            if response.status >= 400:
+                raise urllib.error.HTTPError(
+                    f"http://{self.host}:{self.port}/api/v1/benchmark", response.status,
+                    response.reason, response.headers, io.BytesIO(data),
+                )
+            return json.loads(data.decode("utf-8"))
+        finally:
+            with self._conn_lock:
+                self._conn = None
+            conn.close()
 
     def run(self) -> None:
         labels = {"cpu": "CPU", "memory": "Arbeitsspeicher", "gpu": "GPU", "disk": "Datenträger"}
         try:
             for kind in self.benchmarks:
+                if self._stop_event.is_set():
+                    return
                 self.resultReady.emit(labels[kind], "Läuft", "Server-Benchmark")
-                body = json.dumps({"kind": kind, **self.options}).encode()
-                request = urllib.request.Request(
-                    f"http://{self.host}:{self.port}/api/v1/benchmark",
-                    data=body, method="POST",
-                    headers={"Content-Type": "application/json", "Authorization": f"Bearer {self.token}"},
-                )
-                with urllib.request.urlopen(request, timeout=360) as response:
-                    result = json.loads(response.read().decode("utf-8"))
+                result = self._post(json.dumps({"kind": kind, **self.options}).encode())
+                if self._stop_event.is_set():
+                    return
                 self.resultReady.emit(result["label"], result["result"], result["details"])
         except urllib.error.HTTPError as error:
+            if self._stop_event.is_set():
+                return
             self.resultReady.emit("Server", "Fehlgeschlagen", _http_error_text(error))
-        except (OSError, urllib.error.URLError, ValueError, KeyError) as error:
+        except (OSError, http.client.HTTPException, ValueError, KeyError) as error:
+            if self._stop_event.is_set():
+                return
             self.resultReady.emit("Server", "Fehlgeschlagen", str(error))
         self.finished.emit()

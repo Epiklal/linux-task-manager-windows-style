@@ -17,6 +17,8 @@ Built for Linux desktops running Wayland or X11. The user interface is in German
 - [Features at a glance](#features-at-a-glance)
 - [What gets installed](#what-gets-installed)
 - [Install, run, update, uninstall](#install)
+- [Debian package (.deb)](#debian-package-deb)
+- [Arch package (PKGBUILD)](#arch-package-pkgbuild)
 - [Feature guide (every tab)](#feature-guide)
 - [Design and color schemes](#design-and-color-schemes)
 - [Remote monitoring (server mode)](#remote-monitoring-server-mode)
@@ -75,6 +77,11 @@ Built for Linux desktops running Wayland or X11. The user interface is in German
 
 ## What gets installed
 
+This section describes `./install.sh`. On Debian, Ubuntu and Linux Mint you can use
+the [Debian package (.deb)](#debian-package-deb) instead: `apt` then installs
+everything listed here as package dependencies, and the package takes care of
+PySide6 itself (see there).
+
 `./install.sh` asks for your password once (for the package manager) and then
 installs:
 
@@ -99,8 +106,10 @@ one of the optional packages, the installer skips it and lists it at the end
 instead of aborting.
 
 **Python packages** (only inside the project's own virtual environment, not
-system-wide): [`PySide6`](https://pypi.org/project/PySide6/) (Qt user interface)
-and [`psutil`](https://pypi.org/project/psutil/) (process and system data).
+system-wide): [`PySide6-Essentials`](https://pypi.org/project/PySide6-Essentials/)
+(Qt user interface, about 100 MB download) and
+[`psutil`](https://pypi.org/project/psutil/) (process and system data). The
+installer needs an internet connection for this download.
 
 **Files created**
 
@@ -114,7 +123,10 @@ Nothing else is changed on your system. The optional **Einstellungen →
 Hardwaredaten mit sudo einrichten** button additionally installs a small read-only
 helper (`/usr/local/libexec/wintaskmanager-smartctl`) and a matching sudo rule
 (`/etc/sudoers.d/wintaskmanager-smartctl`) so SMART and RAM data can be read
-without typing your password every time. The helper can only run `smartctl` on
+without typing your password every time. (The .deb already ships the helper as
+`/usr/libexec/wintaskmanager/wintaskmanager-smartctl` and the Arch package as
+`/usr/lib/wintaskmanager/wintaskmanager-smartctl`; the button then only adds
+the sudo rule and the udev rule.) The helper can only run `smartctl` on
 block devices and `dmidecode -t memory`. It also makes the CPU energy counters
 (RAPL, `/sys/class/powercap/intel-rapl*:*/energy_uj`, on Intel and AMD) readable
 for your user group, right away and on every boot through a udev rule
@@ -133,7 +145,10 @@ terminal is found, the application shows the commands to run yourself. `sudo` mu
 be installed.
 
 On a server without a desktop, run the same setup manually from the project folder
-(after installing `smartmontools` and `dmidecode` with your package manager):
+(after installing `smartmontools` and `dmidecode` with your package manager). With
+the .deb or the Arch package, skip the two `install` lines and write the packaged
+helper (`/usr/libexec/wintaskmanager/wintaskmanager-smartctl`, on Arch
+`/usr/lib/wintaskmanager/wintaskmanager-smartctl`) into the sudo rule instead:
 
 ```bash
 sudo install -d -m 0755 /usr/local/libexec
@@ -157,6 +172,15 @@ for the services tab.
 
 ### Supported distributions
 
+The [Debian package](#debian-package-deb) runs on Debian 13, Ubuntu 24.04, Linux
+Mint 22 and newer. Debian 13 ships PySide6 6.8 as system packages, which the package
+uses directly. Ubuntu 24.04 and Linux Mint 22 have no PySide6 packages at all, so
+there the package downloads PySide6 from PyPI into `/opt/wintaskmanager/venv` while
+it is being installed (internet connection needed once). On Arch Linux and its
+derivatives (Manjaro, EndeavourOS, CachyOS, ...) the [Arch package](#arch-package-pkgbuild)
+uses the distribution's own `pyside6` and `python-psutil` packages, so nothing is
+downloaded from PyPI. The `./install.sh` installer supports:
+
 | Distribution family | Package manager |
 | --- | --- |
 | Debian, Ubuntu, Linux Mint | `apt` |
@@ -169,12 +193,24 @@ Any other distribution works too if Python 3 (with `venv` and `pip`) is installe
 the installer then skips the system packages and sets up the application anyway.
 Install the optional tools yourself if you want the related data.
 
-Note: PySide6 is installed with `pip`, which provides it for glibc-based systems
-(practically all distributions) on x86-64 and ARM64. Alpine Linux uses musl, for
-which `pip` has no PySide6 build; there you need a PySide6 package from the
+Note on PySide6: where the distribution ships a current PySide6 (6.6 or newer) as a
+system package together with psutil, the installer uses it and downloads nothing.
+On Arch Linux it installs `pyside6` and `python-psutil` with `pacman` for exactly
+that purpose; on Debian 13 the `python3-pyside6.*` packages are picked up when they
+are already installed. The `.venv` then only passes the system packages through. On
+all other systems PySide6 is installed with `pip`, which provides it for glibc-based
+systems (practically all distributions) on x86-64 and ARM64. Alpine Linux uses musl,
+for which `pip` has no PySide6 build; there you need a PySide6 package from the
 distribution, which is untested.
 
 ## Install
+
+On **Debian, Ubuntu, Linux Mint** and other `apt`-based systems, the easiest way is
+the [Debian package](#debian-package-deb) below: one `.deb` file from the
+[Releases page](https://github.com/Epiklal/linux-task-manager-windows-style/releases)
+that installs the application together with everything it needs. On **Arch Linux**
+and its derivatives, build and install the [Arch package](#arch-package-pkgbuild)
+below with `makepkg -si`. On all other distributions, use the installer script:
 
 ```bash
 git clone https://github.com/Epiklal/linux-task-manager-windows-style.git
@@ -182,9 +218,149 @@ cd linux-task-manager-windows-style
 ./install.sh
 ```
 
+`sh install.sh` works as well (for example after downloading the project as a ZIP
+file, which drops the executable bit). Run the script as your normal user, **not**
+with `sudo`: it asks for your password itself when it installs system packages.
+Started with `sudo`, it stops with a hint, because the virtual environment and the
+menu entry would otherwise end up in root's home directory. If a step fails, the
+script prints that step and the most common causes; fix the cause and simply run
+`./install.sh` again.
+
+### Debian package (.deb)
+
+Requirements: Debian 13, Ubuntu 24.04, Linux Mint 22 or newer, 64-bit (x86-64 or
+ARM64). On Ubuntu and Linux Mint the first installation also needs an internet
+connection (see [How PySide6 is provided](#how-pyside6-is-provided)).
+
+**Download:** the latest `wintaskmanager_<version>_all.deb` is on the
+[Releases page](https://github.com/Epiklal/linux-task-manager-windows-style/releases).
+Download it and either double-click it in your file manager (Linux Mint opens it in
+the package installer, which also installs the recommended tools) or install it from
+a terminal:
+
+```bash
+cd ~/Downloads
+sudo apt install ./wintaskmanager_*.deb
+```
+
+Do not use `dpkg -i` directly: it does not install the dependencies. If you did,
+`sudo apt install -f` completes the installation.
+
+**Build it yourself** (on any Debian-based system; the build itself needs no
+internet connection):
+
+```bash
+git clone https://github.com/Epiklal/linux-task-manager-windows-style.git
+cd linux-task-manager-windows-style
+./build-deb.sh
+sudo apt install ./dist/wintaskmanager_*.deb
+```
+
+`build-deb.sh` only needs `dpkg-deb` (package `dpkg`, part of every Debian-based
+system); no `debhelper`, no `venv`, no `pip`. It prints the name of the finished file,
+e.g. `dist/wintaskmanager_1.0.0+20261025.1459.g854e76c_all.deb` (the version contains
+the build time and the Git commit; pass your own with `./build-deb.sh 1.2.3`). If
+`dist/` already holds older builds, install the file the script printed instead of
+using the `*` wildcard.
+
+The same `.deb` works on every supported distribution: copy it to any other machine
+and install it there with `sudo apt install ./wintaskmanager_*.deb`, or open it in
+your file manager. `apt` resolves the dependencies itself:
+
+- **Depends** (always installed): `python3`, `python3-venv`, `python3-psutil`,
+  `libxcb-cursor0` and the Qt runtime libraries (`libxcb-*`, `libxkbcommon-x11-0`,
+  `libgl1`, `libegl1`, `libfontconfig1`, `libdbus-1-3`, ...).
+- **Recommends** (installed by default; skip with `--no-install-recommends`):
+  `python3-pyside6.qtcore`, `python3-pyside6.qtgui`, `python3-pyside6.qtwidgets` and
+  `qt6-svg-plugins` (PySide6 from the distribution, where it exists), the Wayland
+  client libraries, and the optional tools from
+  [What gets installed](#what-gets-installed): `smartmontools`, `dmidecode`,
+  `lm-sensors`, `pciutils`, `sudo`, `sysbench`, `fio`, `glmark2-x11`, `qt6-wayland`.
+- **Suggests** (not installed automatically): `docker.io`, `nvidia-smi`.
+
+#### How PySide6 is provided
+
+Right after unpacking, the package checks whether PySide6 6.6 or later can be
+imported from the system packages:
+
+- **Debian 13 and newer:** yes - nothing else happens, `/opt/wintaskmanager` is not
+  created.
+- **Ubuntu 24.04, Linux Mint 22:** these distributions ship no PySide6 packages, so
+  `apt` silently skips those Recommends. The package then creates a virtual
+  environment in `/opt/wintaskmanager/venv` and installs `PySide6-Essentials` into it
+  with `pip` from pypi.org (about 100 MB, a few minutes on a slow connection;
+  `psutil` comes from the system package). Nothing is installed into the system
+  Python.
+
+If the download fails (no internet, proxy, pypi.org unreachable), `apt` reports the
+package as not fully installed and prints the reason (in German). Fix the cause and
+run `sudo dpkg --configure -a` (or `sudo /usr/libexec/wintaskmanager/setup-venv`);
+no reinstallation is needed. The launcher `wintaskmanager` uses the virtual
+environment when it exists and the system packages otherwise.
+
+The package installs:
+
+| Path | Content |
+| --- | --- |
+| `/usr/share/wintaskmanager/` | The application (`main.py`, `app/`, `pages/`, `widgets/`), byte-compiled on installation |
+| `/usr/bin/wintaskmanager` | Launcher; `wintaskmanager --server` starts the server mode |
+| `/usr/share/applications/wintaskmanager.desktop` | Menu entry **Task-Manager** |
+| `/usr/libexec/wintaskmanager/wintaskmanager-smartctl` | Read-only helper for SMART and RAM data; **Hardwaredaten mit sudo einrichten** then only adds the sudo rule and the udev rule |
+| `/usr/libexec/wintaskmanager/setup-venv` | Sets up PySide6 (system packages or `/opt/wintaskmanager/venv`); runs automatically during installation |
+| `/opt/wintaskmanager/venv/` | Only on Ubuntu/Linux Mint: virtual environment with PySide6 from PyPI; removed together with the package |
+| `/usr/lib/systemd/system/wintaskmanager-server.service` | systemd service for the server mode, not enabled by default (see [Remote monitoring](#remote-monitoring-server-mode)) |
+| `/etc/default/wintaskmanager-server` | Options for that service, e.g. the token; readable by root only (mode 600) |
+| `/usr/share/doc/wintaskmanager/` | This README, changelog and copyright |
+
+Your settings stay in `~/.config/WinTaskManager/TaskManager.conf`, as with the
+installer script. If you used `./install.sh` on the same machine before, remove its
+menu entry (`rm ~/.local/share/applications/wintaskmanager.desktop`) so that the menu
+starts the packaged version.
+
+### Arch package (PKGBUILD)
+
+On Arch Linux, Manjaro, EndeavourOS, CachyOS and other `pacman`-based systems, build
+the package from the repository with the `PKGBUILD` in `packaging/arch/` and install
+it (`makepkg` needs `base-devel` and `git`; `-s` installs the dependencies, `-i`
+installs the finished package):
+
+```bash
+sudo pacman -S --needed base-devel git
+git clone https://github.com/Epiklal/linux-task-manager-windows-style.git
+cd linux-task-manager-windows-style/packaging/arch
+makepkg -si
+```
+
+The package depends on the distribution's own `pyside6` and `python-psutil`
+packages; there is no `pip` download and no virtual environment. The optional tools
+(`smartmontools`, `dmidecode`, `lm_sensors`, `pciutils`, `sysbench`, `fio`,
+`glmark2`, `qt6-wayland`, ...) are listed as optional dependencies when the package
+is installed; install the ones you want with `pacman`. The package is not in the
+AUR, so updates are built the same way (see [Update](#update)).
+
+The installed layout matches the Debian package, with these differences:
+
+| Path | Content |
+| --- | --- |
+| `/usr/lib/wintaskmanager/wintaskmanager-smartctl` | Read-only helper for SMART and RAM data (the .deb uses `/usr/libexec/`); **Hardwaredaten mit sudo einrichten** then only adds the sudo rule and the udev rule |
+| `/usr/lib/systemd/system/wintaskmanager-server.service` | systemd service for the server mode, not enabled by default |
+| `/etc/default/wintaskmanager-server` | Options for that service, e.g. the token; readable by root only (mode 600), kept as a `.pacsave` file on removal |
+| `/usr/share/licenses/wintaskmanager/LICENSE` | Copyright information |
+
+There is no `setup-venv` and no `/opt/wintaskmanager/venv`. The `.pkg.tar.zst` file
+and the `pkg/` and `src/` directories that `makepkg` creates in `packaging/arch/`
+are ignored by git.
+
 ## Run
 
-Start **Task-Manager** from your application menu, or from the project folder:
+Start **Task-Manager** from your application menu. From a terminal, with the Debian
+or Arch package:
+
+```bash
+wintaskmanager
+```
+
+or from the project folder when installed with `./install.sh`:
 
 ```bash
 ./run.sh
@@ -193,11 +369,40 @@ Start **Task-Manager** from your application menu, or from the project folder:
 If Qt needs an explicitly selected display backend:
 
 ```bash
-QT_QPA_PLATFORM=wayland ./run.sh
-QT_QPA_PLATFORM=xcb ./run.sh
+QT_QPA_PLATFORM=wayland ./run.sh      # or: QT_QPA_PLATFORM=wayland wintaskmanager
+QT_QPA_PLATFORM=xcb ./run.sh          # or: QT_QPA_PLATFORM=xcb wintaskmanager
 ```
 
 ## Update
+
+Debian package - download the new `.deb` from the
+[Releases page](https://github.com/Epiklal/linux-task-manager-windows-style/releases)
+and install it over the old one with `sudo apt install ./wintaskmanager_*.deb`, or
+build it yourself (if `dist/` holds older builds too, install the file name the
+script prints):
+
+```bash
+cd linux-task-manager-windows-style
+git pull
+./build-deb.sh
+sudo apt install ./dist/wintaskmanager_*.deb
+```
+
+An existing `/opt/wintaskmanager/venv` with a current PySide6 is kept, so an update
+normally needs no download.
+
+Arch package - pull the new sources and build the package again (raise `pkgrel` in
+the `PKGBUILD` if the version number has not changed, otherwise `pacman` reports the
+same version):
+
+```bash
+cd linux-task-manager-windows-style
+git pull
+cd packaging/arch
+makepkg -si
+```
+
+Installer script:
 
 ```bash
 cd linux-task-manager-windows-style
@@ -205,9 +410,35 @@ git pull
 ./install.sh
 ```
 
-Your settings are kept.
+Your settings are kept in both cases.
 
 ## Uninstall
+
+Debian package:
+
+```bash
+sudo apt purge wintaskmanager       # or "apt remove" to keep /etc/default/wintaskmanager-server
+sudo apt autoremove                 # drops the recommended tools if nothing else needs them
+rm -r ~/.config/WinTaskManager      # optional: your settings
+```
+
+Both `remove` and `purge` delete `/opt/wintaskmanager` (the PySide6 virtual
+environment on Ubuntu/Linux Mint). `purge` also removes the server configuration, the
+sudo rule for the packaged helper and the RAPL udev rule; the service is stopped and
+disabled automatically.
+
+Arch package:
+
+```bash
+sudo pacman -R wintaskmanager         # or "pacman -Rs" to drop unneeded dependencies too
+rm -r ~/.config/WinTaskManager        # optional: your settings
+```
+
+This also stops and disables the service and removes the sudo rule for the packaged
+helper and the RAPL udev rule. The server configuration is kept as
+`/etc/default/wintaskmanager-server.pacsave` if you changed it.
+
+Installer script:
 
 ```bash
 rm ~/.local/share/applications/wintaskmanager.desktop
@@ -215,8 +446,9 @@ rm -r ~/.config/WinTaskManager
 rm -r linux-task-manager-windows-style      # the project folder, including .venv
 ```
 
-If you used **Hardwaredaten mit sudo einrichten**, also remove the helper, its
-sudo rule and the RAPL udev rule:
+If you used **Hardwaredaten mit sudo einrichten** with the installer script, also
+remove the helper, its sudo rule and the RAPL udev rule (with the .deb or the Arch
+package the helper belongs to the package and is removed with it):
 
 ```bash
 sudo rm /etc/sudoers.d/wintaskmanager-smartctl /usr/local/libexec/wintaskmanager-smartctl
@@ -297,7 +529,8 @@ unit and source. Refreshes automatically; click a column header to sort.
 ### Dienste (services)
 
 All systemd services with description and status (read-only), with search and
-**Aktualisieren** (refresh). Requires `systemctl`.
+**Aktualisieren** (refresh). Requires `systemctl`; without it the tab only shows a
+short note.
 
 ### Docker
 
@@ -377,12 +610,21 @@ server, NAS or VM.
 
 ### 1. Install on the server
 
-Install exactly as on the desktop (clone the repository, run `./install.sh`).
+Install exactly as on the desktop: on Debian/Ubuntu/Mint download the `.deb` from
+the [Releases page](https://github.com/Epiklal/linux-task-manager-windows-style/releases)
+(or build it on any machine with `./build-deb.sh`), copy it to the server and run
+`sudo apt install ./wintaskmanager_*.deb`; on Arch clone the repository and build
+the package (`cd packaging/arch && makepkg -si`); on other distributions clone the
+repository and run `./install.sh`. No desktop environment is
+needed, but PySide6 is: the server mode uses the same data-collection code as the
+desktop application, so the Qt packages (or the virtual environment) are required
+even on a headless server.
 
 ### 2. Start the server
 
 ```bash
-./run.sh --server
+wintaskmanager --server      # Debian package
+./run.sh --server            # installer script, from the project folder
 ```
 
 Example output:
@@ -429,8 +671,37 @@ Create a fixed token once:
 python3 -c "import secrets; print(secrets.token_urlsafe(24))"
 ```
 
-Create `/etc/systemd/system/wintaskmanager-server.service` (adjust the path, user
-and token):
+**Debian or Arch package:** the service `wintaskmanager-server` is already installed
+but not enabled. Put the token into `/etc/default/wintaskmanager-server` (readable by root
+only) and enable the service:
+
+```bash
+sudoedit /etc/default/wintaskmanager-server     # WINTASKMANAGER_SERVER_OPTS="--token YOUR_TOKEN"
+sudo systemctl enable --now wintaskmanager-server
+systemctl status wintaskmanager-server
+```
+
+Without a token in that file, a new one is generated on every start and written to
+the journal (`journalctl -u wintaskmanager-server`). The service runs as a dynamic
+system user, which is enough for processes, CPU, memory, disks, network and sensors.
+For SMART and RAM details (sudo helper), the Docker tab and the disk benchmark, run it
+as a real user instead:
+
+```bash
+sudo systemctl edit wintaskmanager-server
+```
+
+```ini
+[Service]
+DynamicUser=no
+User=youruser
+```
+
+then restart it with `sudo systemctl restart wintaskmanager-server` and set up the
+helper and sudo rule for that user (see the end of this section).
+
+**Installer script:** create `/etc/systemd/system/wintaskmanager-server.service`
+(adjust the path, user and token):
 
 ```ini
 [Unit]
@@ -593,10 +864,30 @@ Project layout:
 | `app/settings.py` | Persisted settings |
 | `pages/` | One module per tab |
 | `widgets/` | Graphs, performance tiles, Windows 11 navigation pane, tables |
+| `build-deb.sh`, `packaging/debian/` | Debian package: build script, control file, maintainer scripts, launcher, PySide6 setup, systemd unit |
+| `packaging/arch/` | Arch package: `PKGBUILD`, launcher, `.install` script with the pacman hooks (`cd packaging/arch && makepkg -si`) |
+| `.github/workflows/build-deb.yml` | GitHub Actions: builds the `.deb`, installs it on Ubuntu as a test and attaches it to a GitHub Release for `v*` tags |
 
 Generated local files are excluded through `.gitignore`, including `.venv`, Python
-bytecode, and test caches. User preferences are stored outside the repository in
-the current user's Qt settings directory.
+bytecode, test caches and the package build directories `build/`, `dist/` and
+`packaging/arch/{pkg,src}` together with the built `*.pkg.tar.*` files. User
+preferences are stored outside the repository in the current user's Qt settings
+directory.
+
+### Releasing a new version
+
+Push a tag that starts with `v`. GitHub Actions then builds the package with
+`./build-deb.sh <version>`, installs it on a fresh Ubuntu runner as a smoke test and
+publishes a GitHub Release with the `.deb` attached:
+
+```bash
+git tag v1.0.1
+git push origin v1.0.1
+```
+
+Every push to `main` and every manual run (**Actions** tab → *Build .deb* → *Run
+workflow*) builds and tests the package as well, but only stores it as a workflow
+artifact instead of creating a release.
 
 ## Contributing
 

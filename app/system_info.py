@@ -12,17 +12,19 @@ import shlex
 import shutil
 import socket
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 
 import psutil
 from PySide6.QtCore import QThread, Signal
 
+from app.hardware_setup import helper_path
+
 # A leftover nvidia-smi is useless while nouveau drives the card (no NVIDIA module).
 _NVIDIA_SMI = (shutil.which("nvidia-smi")
                if os.path.isdir("/proc/driver/nvidia") or not os.path.isdir("/sys/module/nouveau")
                else None)
-_SMART_HELPER = "/usr/local/libexec/wintaskmanager-smartctl"
 
 _DRM_CLIENT_ID_RE = re.compile(r"^drm-client-id:\s+(\d+)")
 _DRM_VRAM_RE = re.compile(r"^drm-memory-vram:\s+(\d+)\s+KiB")
@@ -231,6 +233,8 @@ class GpuMonitor:
             self._prev_busy[pid] = (now, busy_ns)
             result[pid] = {"vram_mb": vram_kib / 1024, "gpu_percent": gpu_percent}
 
+        # Forget exited processes, or the dict keeps every PID that ever used the GPU.
+        self._prev_busy = {pid: v for pid, v in self._prev_busy.items() if pid in result}
         return result
 
 
@@ -651,7 +655,77 @@ class GpuSystemMonitor:
         return "GPU"
 
 
-class GpuSystemWorker(QThread):
+class WorkerStopped(subprocess.SubprocessError):
+    """Raised by StoppableWorker._run_command once stop() has been requested."""
+
+
+def _run_capture(cmd: list[str], timeout: float) -> subprocess.CompletedProcess:
+    return subprocess.run(cmd, text=True, capture_output=True, timeout=timeout, check=False)
+
+
+class StoppableWorker(QThread):
+    """QThread whose stop() never uses terminate().
+
+    Cancelling a thread that runs Python code can leave the GIL or allocator locks
+    held (that crashed the app on close). Instead run() checks `_stop_event`, and
+    stop() ends the external command the thread is waiting on (see _run_command)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._stop_event = threading.Event()
+        self._child_lock = threading.Lock()
+        self._child: subprocess.Popen | None = None
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        # SIGTERM first: sudo forwards it to its root child, SIGKILL would orphan it.
+        self._signal_child(kill=False)
+        if not self.wait(3000):
+            self._signal_child(kill=True)
+            self.wait()
+
+    def _signal_child(self, kill: bool) -> None:
+        with self._child_lock:
+            if self._child is None:
+                return
+            try:
+                if kill:
+                    self._child.kill()
+                else:
+                    self._child.terminate()
+            except OSError:
+                pass
+
+    def _run_command(self, cmd: list[str], timeout: float, *, stderr=subprocess.PIPE,
+                     check: bool = False) -> subprocess.CompletedProcess:
+        """subprocess.run() that stop() can interrupt; raises WorkerStopped then.
+
+        Also works on a worker that was never started (the remote server uses that)."""
+        with self._child_lock:
+            if self._stop_event.is_set():
+                raise WorkerStopped(cmd)
+            child = self._child = subprocess.Popen(
+                cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=stderr,
+                text=True, encoding="utf-8", errors="replace",
+            )
+        try:
+            try:
+                stdout, error_output = child.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.communicate()
+                raise
+        finally:
+            with self._child_lock:
+                self._child = None
+        if self._stop_event.is_set():
+            raise WorkerStopped(cmd)
+        if check and child.returncode:
+            raise subprocess.CalledProcessError(child.returncode, cmd, stdout, error_output)
+        return subprocess.CompletedProcess(cmd, child.returncode, stdout, error_output)
+
+
+class GpuSystemWorker(StoppableWorker):
     """Poll overall GPU statistics without blocking the Qt UI thread."""
 
     snapshotReady = Signal(object)
@@ -659,20 +733,15 @@ class GpuSystemWorker(QThread):
     def __init__(self, interval: float = 0.5, parent=None):
         super().__init__(parent)
         self._interval = interval
-        self._running = True
         self._monitor = GpuSystemMonitor()
 
-    def stop(self) -> None:
-        self._running = False
-        self.wait(200)
-        if self.isRunning():
-            self.terminate()
-            self.wait(200)
-
     def run(self) -> None:
-        while self._running:
-            self.snapshotReady.emit(self._monitor.poll())
-            time.sleep(self._interval)
+        while not self._stop_event.is_set():
+            snapshot = self._monitor.poll()
+            if self._stop_event.is_set():
+                return
+            self.snapshotReady.emit(snapshot)
+            self._stop_event.wait(self._interval)
 
 
 class CpuPowerMonitor:
@@ -763,8 +832,9 @@ def get_cpu_temperature() -> float | None:
 def get_ram_speed_mhz() -> int | None:
     """Configured DIMM speed via the restricted hardware helper when available."""
     commands = []
-    if os.path.exists(_SMART_HELPER):
-        commands.append(["sudo", "-n", _SMART_HELPER, "memory"])
+    helper = helper_path()
+    if os.path.exists(helper):
+        commands.append(["sudo", "-n", helper, "memory"])
     dmidecode = shutil.which("dmidecode")
     if dmidecode:
         commands.append([dmidecode, "-t", "memory"])
@@ -852,12 +922,17 @@ def _smart_value(data: dict, *keys: str) -> float | None:
     return None
 
 
-def _smartctl_disk_stats(device: str, use_sudo: bool = False) -> dict:
-    """Return best-effort lifetime SMART metrics for one Linux block device."""
+def _smartctl_disk_stats(device: str, use_sudo: bool = False, run=None) -> dict:
+    """Return best-effort lifetime SMART metrics for one Linux block device.
+
+    `run(cmd, timeout)` executes the commands; DiskSmartWorker passes its
+    interruptible _run_command."""
+    run = run or _run_capture
     smartctl = shutil.which("smartctl")
     commands = []
-    if os.path.exists(_SMART_HELPER):
-        commands.append(["sudo", "-n", _SMART_HELPER, device])
+    helper = helper_path()
+    if os.path.exists(helper):
+        commands.append(["sudo", "-n", helper, device])
     if smartctl:
         command = [smartctl, "--all", "--json=o", f"/dev/{device}"]
         commands.append(command)
@@ -868,9 +943,7 @@ def _smartctl_disk_stats(device: str, use_sudo: bool = False) -> dict:
     data = None
     for candidate in commands:
         try:
-            completed = subprocess.run(
-                candidate, text=True, capture_output=True, timeout=12, check=False,
-            )
+            completed = run(candidate, timeout=12)
             data = json.loads(completed.stdout)
             break
         except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError):
@@ -923,7 +996,7 @@ def _smartctl_disk_stats(device: str, use_sudo: bool = False) -> dict:
     }
 
 
-class DiskSmartWorker(QThread):
+class DiskSmartWorker(StoppableWorker):
     """Read potentially slow SMART data away from the UI thread."""
 
     snapshotReady = Signal(dict)
@@ -934,25 +1007,21 @@ class DiskSmartWorker(QThread):
         self._devices = devices
         self._use_sudo = use_sudo
         self._interval = interval
-        self._running = True
-
-    def stop(self) -> None:
-        self._running = False
-        self.wait(200)
-        if self.isRunning():
-            self.terminate()
-            self.wait(200)
 
     def run(self) -> None:
-        while self._running:
-            self.snapshotReady.emit({
-                device: _smartctl_disk_stats(device, self._use_sudo) for device in self._devices
-            })
-            wait_seconds = 5.0 if not shutil.which("smartctl") else self._interval
-            for _ in range(int(wait_seconds * 10)):
-                if not self._running:
+        try:
+            while not self._stop_event.is_set():
+                stats = {
+                    device: _smartctl_disk_stats(device, self._use_sudo, run=self._run_command)
+                    for device in self._devices
+                }
+                if self._stop_event.is_set():
                     return
-                time.sleep(0.1)
+                self.snapshotReady.emit(stats)
+                wait_seconds = 5.0 if not shutil.which("smartctl") else self._interval
+                self._stop_event.wait(wait_seconds)
+        except WorkerStopped:
+            pass
 
 
 def list_physical_disks() -> list[dict]:
@@ -1185,7 +1254,7 @@ class ProcessRow:
     gpu_vram_mb: float | None = None
 
 
-class ProcessWorker(QThread):
+class ProcessWorker(StoppableWorker):
     """Polls all processes in a background thread and emits ready-to-display rows."""
 
     rowsReady = Signal(list)
@@ -1193,16 +1262,19 @@ class ProcessWorker(QThread):
     def __init__(self, interval: float = 1.0, parent=None):
         super().__init__(parent)
         self._interval = interval
-        self._running = True
+        # Back-pressure: the next batch is only collected once the GUI has handled the
+        # previous one (mark_consumed). Every queued rowsReady keeps its whole row list
+        # alive, so without this a stalled GUI thread lets the queue grow without limit.
+        self._consumed = threading.Event()
+        self._consumed.set()
         self._procs: dict[int, psutil.Process] = {}
         self._gpu_monitor = GpuMonitor()
 
-    def stop(self) -> None:
-        self._running = False
-        self.wait(200)
-        if self.isRunning():
-            self.terminate()
-            self.wait(200)
+    def set_interval(self, seconds: float) -> None:
+        self._interval = seconds
+
+    def mark_consumed(self) -> None:
+        self._consumed.set()
 
     def run(self) -> None:
         # Prime cpu_percent() for every currently running process so the first
@@ -1215,13 +1287,16 @@ class ProcessWorker(QThread):
                 proc.cpu_percent(interval=None)
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
-        time.sleep(0.25)
+        if self._stop_event.wait(0.25):
+            return
 
-        while self._running:
-            self._sync_process_table()
-            rows = self._collect_rows()
-            self.rowsReady.emit(rows)
-            time.sleep(self._interval)
+        while not self._stop_event.is_set():
+            if self._consumed.is_set():
+                self._sync_process_table()
+                rows = self._collect_rows()
+                self._consumed.clear()
+                self.rowsReady.emit(rows)
+            self._stop_event.wait(self._interval)
 
     def _sync_process_table(self) -> None:
         current_pids = set(psutil.pids())
@@ -1332,7 +1407,7 @@ def _parse_mem_to_mb(value: str) -> float:
     return float(number) * _MEM_UNIT_FACTORS_MB.get(unit, 1.0)
 
 
-class DockerWorker(QThread):
+class DockerWorker(StoppableWorker):
     """Polls `docker ps` / `docker stats` in a background thread so the Docker tab
     never blocks the UI. Emits `unavailable` once if the docker CLI is missing or
     the daemon can't be reached (e.g. no permission / daemon not running)."""
@@ -1343,40 +1418,34 @@ class DockerWorker(QThread):
     def __init__(self, interval: float = 2.0, parent=None):
         super().__init__(parent)
         self._interval = interval
-        self._running = True
         self._docker = shutil.which("docker")
         self._gpu_monitor = GpuMonitor()
-
-    def stop(self) -> None:
-        self._running = False
-        self.wait(200)
-        if self.isRunning():
-            self.terminate()
-            self.wait(200)
 
     def run(self) -> None:
         if not self._docker:
             self.unavailable.emit("Docker ist nicht installiert oder nicht im PATH.")
             return
-        while self._running:
-            rows, error = self._collect_rows()
-            if error:
-                self.unavailable.emit(error)
-                return
-            self.rowsReady.emit(rows)
-            for _ in range(max(1, int(self._interval * 10))):
-                if not self._running:
+        try:
+            while not self._stop_event.is_set():
+                rows, error = self._collect_rows()
+                if self._stop_event.is_set():
                     return
-                time.sleep(0.1)
+                if error:
+                    self.unavailable.emit(error)
+                    return
+                self.rowsReady.emit(rows)
+                self._stop_event.wait(max(0.1, self._interval))
+        except WorkerStopped:
+            pass
 
     def _collect_rows(self) -> tuple[list[DockerContainerRow], str]:
         if not self._docker:
             return [], "Docker ist nicht installiert oder nicht im PATH."
         try:
-            ps_out = subprocess.check_output(
+            ps_out = self._run_command(
                 [self._docker, "ps", "-a", "--format", "{{json .}}"],
-                text=True, timeout=5, stderr=subprocess.STDOUT,
-            )
+                timeout=5, stderr=subprocess.STDOUT, check=True,
+            ).stdout
         except subprocess.CalledProcessError as exc:
             return [], (exc.output or str(exc)).strip()
         except (subprocess.TimeoutExpired, OSError) as exc:
@@ -1386,10 +1455,10 @@ class DockerWorker(QThread):
 
         stats: dict[str, dict] = {}
         try:
-            stats_out = subprocess.check_output(
+            stats_out = self._run_command(
                 [self._docker, "stats", "--no-stream", "--format", "{{json .}}"],
-                text=True, timeout=5, stderr=subprocess.DEVNULL,
-            )
+                timeout=5, stderr=subprocess.DEVNULL, check=True,
+            ).stdout
             for line in stats_out.splitlines():
                 if line.strip():
                     entry = json.loads(line)
@@ -1444,10 +1513,10 @@ class DockerWorker(QThread):
     def _container_pids(self, container_id: str) -> list[int]:
         """Host-side PIDs of processes running inside a container, via `docker top`."""
         try:
-            out = subprocess.check_output(
+            out = self._run_command(
                 [self._docker, "top", container_id],
-                text=True, timeout=3, stderr=subprocess.DEVNULL,
-            )
+                timeout=3, stderr=subprocess.DEVNULL, check=True,
+            ).stdout
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
             return []
         lines = out.splitlines()
