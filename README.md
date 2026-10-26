@@ -353,7 +353,9 @@ are ignored by git.
 
 ## Run
 
-Start **Task-Manager** from your application menu. From a terminal, with the Debian
+Start **Task-Manager** from your application menu. The entry sits in the *System*
+category (Cinnamon: *Administration* / *System Tools*); typing `task` or
+`wintaskmanager` into the menu search finds it. From a terminal, with the Debian
 or Arch package:
 
 ```bash
