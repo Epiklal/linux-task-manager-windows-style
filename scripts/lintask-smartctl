@@ -12,6 +12,133 @@ if [[ "${1:-}" == "memory" ]]; then
     exit 127
 fi
 
+# Python is only used to reach two system calls that have no command line tool.
+# -I -S ignore the environment, the user's site packages and the working directory.
+PAGEOUT_PY='
+import sys
+
+def main():
+    import ctypes, errno, os, signal
+
+    SYS_PROCESS_MADVISE = 440
+    MADV_PAGEOUT = 21
+    # The kernel maps these itself, asking it to page them out can only fail.
+    SKIP = ("[vvar", "[vsyscall", "[vdso")
+
+    class IOVec(ctypes.Structure):
+        _fields_ = [("base", ctypes.c_void_p), ("length", ctypes.c_size_t)]
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.syscall.restype = ctypes.c_long
+
+    def owned_by_caller(pid, caller):
+        # All four ids and the owner of a file in /proc: this leaves out setuid programs and
+        # programs that made themselves undumpable, like ssh-agent, whose secrets must not
+        # reach swap. The kernel moves only the files to root for those, never /proc/PID itself.
+        with open("/proc/%d/status" % pid) as handle:
+            for line in handle:
+                if line.startswith("Uid:"):
+                    if any(int(value) != caller for value in line.split()[1:]):
+                        return False
+                    break
+            else:
+                return False
+        return os.stat("/proc/%d/status" % pid).st_uid == caller
+
+    def regions(pid):
+        with open("/proc/%d/maps" % pid) as handle:
+            for line in handle:
+                fields = line.split(None, 5)
+                if len(fields) == 6 and fields[5].startswith(SKIP):
+                    continue
+                start, end = fields[0].split("-")
+                yield int(start, 16), int(end, 16)
+
+    def page_out(pid, caller):
+        """True if at least one region was handed to the kernel, None if the process is gone."""
+        try:
+            fd = os.pidfd_open(pid)
+        except ProcessLookupError:
+            return None
+        try:
+            if not owned_by_caller(pid, caller):
+                return False
+            ranges = list(regions(pid))
+            # The pid may have been reused before pidfd_open; a live pidfd rules that out now.
+            signal.pidfd_send_signal(fd, 0)
+            done = False
+            for start, end in ranges:
+                vector = IOVec(start, end - start)
+                result = libc.syscall(ctypes.c_long(SYS_PROCESS_MADVISE), fd, ctypes.byref(vector),
+                                      ctypes.c_size_t(1), MADV_PAGEOUT, ctypes.c_uint(0))
+                if result >= 0:
+                    done = True
+                elif ctypes.get_errno() == errno.ENOSYS:
+                    sys.exit(4)
+                elif ctypes.get_errno() == errno.ESRCH:
+                    return None
+            return done
+        except (ProcessLookupError, FileNotFoundError):
+            return None
+        except PermissionError:
+            return False
+        finally:
+            os.close(fd)
+
+    caller = int(sys.argv[1])
+    paged = refused = 0
+    for argument in sys.argv[2:]:
+        outcome = page_out(int(argument), caller)
+        if outcome:
+            paged += 1
+        elif outcome is False:
+            refused += 1
+    print("paged=%d refused=%d" % (paged, refused))
+    if refused and not paged:
+        sys.exit(3)
+
+try:
+    main()
+except SystemExit:
+    raise
+except OSError as error:
+    # 38 is ENOSYS: pidfd_open is missing, the kernel is older than 5.3.
+    sys.exit(4 if error.errno == 38 else 5)
+except Exception:
+    sys.exit(5)
+'
+
+if [[ "${1:-}" == "pageout" ]]; then
+    shift
+    # Exit codes 1 and 2 stay reserved: sudo itself and an older helper use them.
+    if [[ $# -eq 0 ]] || [[ ! "${SUDO_UID:-}" =~ ^[0-9]+$ ]]; then
+        echo "Usage: pageout PID..., run through sudo" >&2
+        exit 5
+    fi
+    for pid in "$@"; do
+        if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
+            echo "Invalid process id" >&2
+            exit 5
+        fi
+    done
+    for python in /usr/bin/python3 /bin/python3; do
+        if [[ -x "$python" ]]; then
+            exec "$python" -I -S -c "$PAGEOUT_PY" "$SUDO_UID" "$@"
+        fi
+    done
+    echo "python3 is not installed" >&2
+    exit 127
+fi
+
+if [[ "${1:-}" == "drop-caches" ]]; then
+    sync || true
+    if ! { echo 3 > /proc/sys/vm/drop_caches; } 2>/dev/null; then
+        echo "Could not write to drop_caches" >&2
+        exit 3
+    fi
+    exit 0
+fi
+
 device="${1:-}"
 if [[ ! "$device" =~ ^[[:alnum:]._-]+$ ]] || [[ ! -b "/dev/$device" ]]; then
     echo "Invalid block device" >&2

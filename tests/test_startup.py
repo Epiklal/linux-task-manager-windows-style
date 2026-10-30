@@ -25,7 +25,7 @@ class TestStartup(unittest.TestCase):
     def test_main_window_constructs_and_shows(self):
         window = MainWindow()
         window.show()
-        self.assertEqual(window.tabs.count(), 8)
+        self.assertEqual(window.tabs.count(), 9)
         window.close()
 
     def test_main_window_closes_without_leftover_worker_threads(self):
@@ -35,6 +35,7 @@ class TestStartup(unittest.TestCase):
 
         threads = (
             window.processes_page.worker,
+            window.memory_page.worker,
             window.performance_page._gpu_worker,
             window.performance_page._smart_worker,
             window.docker_page.worker,

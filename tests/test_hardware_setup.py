@@ -5,6 +5,7 @@ import os
 import shlex
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -205,6 +206,55 @@ class TestHelperScript(unittest.TestCase):
         result = self.run_helper(device, "--scan", "-s", "on", script=self.stubbed_helper())
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stdout.split(), ["smartctl", "--all", "--json=o", f"/dev/{device}"])
+
+    def run_pageout(self, *pids, sudo_uid=None):
+        env = {key: value for key, value in os.environ.items() if key != "SUDO_UID"}
+        if sudo_uid is not None:
+            env["SUDO_UID"] = str(sudo_uid)
+        return subprocess.run(["bash", str(HELPER), "pageout", *pids], capture_output=True,
+                              text=True, env=env)
+
+    def test_pageout_rejects_invalid_calls(self):
+        for pids, sudo_uid in (((), 1000), (("1",), None), (("1",), "root"), (("1;id",), 1000),
+                               (("1", "$(id)"), 1000), (("-1",), 1000), (("",), 1000)):
+            with self.subTest(pids=pids, sudo_uid=sudo_uid):
+                result = self.run_pageout(*pids, sudo_uid=sudo_uid)
+                self.assertEqual(result.returncode, 5)
+                self.assertEqual(result.stdout, "")
+
+    def test_pageout_leaves_processes_of_other_users_alone(self):
+        # Checked before any memory is touched, so this also holds when running as root.
+        child = subprocess.Popen(["sleep", "60"])
+        self.addCleanup(child.wait)
+        self.addCleanup(child.kill)
+        result = self.run_pageout(str(child.pid), sudo_uid=os.getuid() + 1)
+        self.assertEqual(result.returncode, 3)
+        self.assertEqual(result.stdout.split(), ["paged=0", "refused=1"])
+
+    def test_pageout_leaves_undumpable_processes_alone(self):
+        # Like ssh-agent: its secrets must not reach swap, whoever owns it.
+        code = ("import ctypes, sys, time; ctypes.CDLL(None).prctl(4, 0, 0, 0, 0); "
+                "print('ready', flush=True); time.sleep(60)")
+        child = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, text=True)
+        self.addCleanup(child.stdout.close)
+        self.addCleanup(child.wait)
+        self.addCleanup(child.kill)
+        self.assertEqual(child.stdout.readline().strip(), "ready")
+        result = self.run_pageout(str(child.pid), sudo_uid=os.getuid())
+        self.assertEqual(result.returncode, 3)
+        self.assertEqual(result.stdout.split(), ["paged=0", "refused=1"])
+
+    def test_pageout_of_a_finished_process_is_no_error(self):
+        child = subprocess.Popen(["true"])
+        child.wait()
+        result = self.run_pageout(str(child.pid), sudo_uid=os.getuid())
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.split(), ["paged=0", "refused=0"])
+
+    def test_drop_caches_without_root_is_refused(self):
+        if os.getuid() == 0:
+            self.skipTest("would really empty the cache")
+        self.assertEqual(self.run_helper("drop-caches").returncode, 3)
 
 
 if __name__ == "__main__":

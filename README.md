@@ -65,6 +65,8 @@ The screenshots show the German interface.
 
 - **Processes** with Windows-style grouping, heat map, overall usage in the column
   headers, search, end task, run new task and drag & drop to start programs.
+- **Memory** overview: what really uses your RAM, hints on programs holding a lot of it,
+  and ending a program or moving it to swap on request. Nothing happens automatically.
 - **Performance** graphs for CPU (overall or per logical processor), memory, every
   physical disk, network (auto-scaled, send/receive) and GPU (selectable engines,
   dedicated and shared memory).
@@ -125,14 +127,16 @@ installer needs an internet connection for this download.
 | `~/.config/Lintask/TaskManager.conf` | Your settings (created on first start, readable only by you) |
 
 Nothing else is changed on your system. The optional **Settings →
-Set up hardware data with sudo** button additionally installs a small read-only
+Set up hardware data with sudo** button additionally installs a small
 helper (`/usr/local/libexec/lintask-smartctl`) and a matching sudo rule
 (`/etc/sudoers.d/lintask-smartctl`) so SMART and RAM data can be read
 without typing your password every time. (The .deb already ships the helper as
 `/usr/libexec/lintask/lintask-smartctl` and the Arch package as
 `/usr/lib/lintask/lintask-smartctl`; the button then only adds
 the sudo rule and the udev rule.) The helper can only run `smartctl` on
-block devices and `dmidecode -t memory`. It also makes the CPU energy counters
+block devices and `dmidecode -t memory`, move the memory of *your own* processes to
+swap, and empty the page cache; the last two only happen when you ask for them on the
+Memory tab. The button also makes the CPU energy counters
 (RAPL, `/sys/class/powercap/intel-rapl*:*/energy_uj`, on Intel and AMD) readable
 for your user group, right away and on every boot through a udev rule
 (`/etc/udev/rules.d/99-lintask-rapl.rules`, works with systemd-udevd and
@@ -324,7 +328,7 @@ The package installs:
 | `/usr/share/lintask/` | The application (`main.py`, `app/`, `pages/`, `widgets/`), byte-compiled on installation |
 | `/usr/bin/lintask` | Launcher; `lintask --server` starts the server mode |
 | `/usr/share/applications/lintask.desktop` | Menu entry **Lintask** |
-| `/usr/libexec/lintask/lintask-smartctl` | Read-only helper for SMART and RAM data; **Set up hardware data with sudo** then only adds the sudo rule and the udev rule |
+| `/usr/libexec/lintask/lintask-smartctl` | Helper for SMART and RAM data and the actions on the Memory tab; **Set up hardware data with sudo** then only adds the sudo rule and the udev rule |
 | `/usr/libexec/lintask/setup-venv` | Sets up PySide6 (system packages or `/opt/lintask/venv`); runs automatically during installation |
 | `/opt/lintask/venv/` | Only on Ubuntu/Linux Mint: virtual environment with PySide6 from PyPI; removed together with the package |
 | `/usr/lib/systemd/system/lintask-server.service` | systemd service for the server mode, not enabled by default (see [Remote monitoring](#remote-monitoring-server-mode)) |
@@ -361,7 +365,7 @@ The installed layout matches the Debian package, with these differences:
 
 | Path | Content |
 | --- | --- |
-| `/usr/lib/lintask/lintask-smartctl` | Read-only helper for SMART and RAM data (the .deb uses `/usr/libexec/`); **Set up hardware data with sudo** then only adds the sudo rule and the udev rule |
+| `/usr/lib/lintask/lintask-smartctl` | Helper for SMART and RAM data and the actions on the Memory tab (the .deb uses `/usr/libexec/`); **Set up hardware data with sudo** then only adds the sudo rule and the udev rule |
 | `/usr/lib/systemd/system/lintask-server.service` | systemd service for the server mode, not enabled by default |
 | `/etc/default/lintask-server` | Options for that service, e.g. the token; readable by root only (mode 600), kept as a `.pacsave` file on removal |
 | `/usr/share/licenses/lintask/LICENSE` | Copyright information |
@@ -520,8 +524,8 @@ package manager if you no longer need them.
 
 ## Feature guide
 
-The tab names are the English ones; the German interface shows *Prozesse*, *Leistung*,
-*Sensoren*, *Dienste* and *Einstellungen* instead.
+The tab names are the English ones; the German interface shows *Prozesse*, *Arbeitsspeicher*,
+*Leistung*, *Sensoren*, *Dienste* and *Einstellungen* instead.
 
 ### Processes
 
@@ -547,6 +551,32 @@ The tab names are the English ones; the German interface shows *Prozesse*, *Leis
 - **Drag & drop**: drop executable files from your file manager onto the list to
   start them.
 - Program icons come from your desktop icon theme.
+
+### Memory
+
+Shows what uses your RAM right now and lets you act on it. Nothing is ended, moved or
+emptied without you asking for it.
+
+- **Overview**: memory in use, available now, cache, swap and memory pressure, with a
+  plain rating of whether memory is actually tight. Cache is not counted as used, because
+  Linux gives it back on its own as soon as programs need it.
+- **Programs**: processes combined per program with their RAM and swap, largest first.
+  The *Note* column marks programs that have been idle for a while, belong to another
+  user or are needed by the desktop.
+- **Hints**: name programs that hold a lot of memory or have been idle for a long time.
+  They are suggestions only.
+- **End program**: asks first, sends a normal terminate signal and offers to force the
+  program to end only if it is still running afterwards. Programs of other users, Lintask
+  itself and programs the desktop needs cannot be ended here.
+- **Move to swap**: the program keeps running, but its memory moves to swap and it
+  reacts slowly the next time it is used. This needs swap and the setup under **Settings
+  → Set up hardware data with sudo**. Only your own processes are touched, and processes
+  that protect their memory are left alone. The amount shown is what reached swap; memory
+  shared with other programs stays in RAM, and *available* may not rise until the system
+  needs the space.
+- **Emptying the cache** is off unless you tick *Offer to empty the cache*, and it warns
+  you before it runs. It rarely helps: programs and files load more slowly until the
+  cache has filled up again. It needs the same setup.
 
 ### Performance
 
@@ -709,12 +739,12 @@ Open **Settings → Remote server**, enable **Use data from the server**,
 enter the server IP, port and access token, and click **Apply server
 connection**. The token is stored in your settings file, which only you can read.
 
-While connected, these tabs show the **server's** data: Performance, Processes,
+While connected, these tabs show the **server's** data: Processes, Memory, Performance,
 Sensors, Services, Docker and Autostart. Benchmarks started on the Benchmarks tab
 run **on the server**. Disable the checkbox to go back to local data.
 
-In remote mode the application is **read-only**: *Task beenden*, autostart changes
-and Docker start/stop/restart/remove are disabled, because they would act on your
+In remote mode the application is **read-only**: *Task beenden*, the actions on the
+Memory tab, autostart changes and Docker start/stop/restart/remove are disabled, because they would act on your
 local machine rather than on the server. Local-only things such as Docker favorites,
 names and pictures still work.
 

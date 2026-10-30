@@ -291,7 +291,7 @@ class TestMainWindowLanguage(unittest.TestCase):
         self.assertEqual(current_language(), "de")
         self.assertIsNot(window.settings_page, old_page)
         german_tabs = self.tab_texts(window)
-        self.assertEqual(len(german_tabs), 8)
+        self.assertEqual(len(german_tabs), 9)
         self.assertNotEqual(german_tabs, english_tabs)
         self.assertEqual(window.tabs.currentWidget(), window.page_frames[-1])
         self.assertEqual(window.settings_page.language_combo.currentData(), "de")

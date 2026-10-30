@@ -25,6 +25,7 @@ from app.settings import Settings
 from pages.autostart_page import AutostartPage
 from pages.benchmarks_page import BenchmarksPage
 from pages.docker_page import DockerPage
+from pages.memory_page import MemoryPage
 from pages.performance_page import PerformancePage
 from pages.processes_page import ProcessesPage
 from pages.sensors_page import SensorsPage
@@ -479,7 +480,7 @@ def build_qss(theme: str, style: str = "win10") -> str:
 
 
 # (icon, page title) per main tab, used by the Windows 11 navigation pane.
-_NAV_ICONS = ["processes", "performance", "sensors", "services", "docker", "autostart",
+_NAV_ICONS = ["processes", "performance", "memory", "sensors", "services", "docker", "autostart",
               "benchmarks", "settings"]
 
 
@@ -702,6 +703,7 @@ class MainWindow(QMainWindow):
 
         self.processes_page = ProcessesPage(self.settings)
         self.performance_page = PerformancePage(self.settings.smart_sudo_enabled)
+        self.memory_page = MemoryPage(self.settings)
         self.sensors_page = SensorsPage()
         self.services_page = ServicesPage()
         self.docker_page = DockerPage(self.settings)
@@ -718,6 +720,7 @@ class MainWindow(QMainWindow):
             (self.processes_page, tr("Processes"),
              [processes_new_task, self.processes_page.header_end_task_btn]),
             (self.performance_page, tr("Performance"), [performance_new_task]),
+            (self.memory_page, tr("Memory"), None),
             (self.sensors_page, tr("Sensors"), None),
             (self.services_page, tr("Services"), None),
             (self.docker_page, "Docker", None),
@@ -879,12 +882,14 @@ class MainWindow(QMainWindow):
     def _apply_remote_snapshot(self, payload: dict) -> None:
         if payload.get("remote_disabled"):
             self.processes_page.set_remote_rows(None)
+            self.memory_page.set_remote_data(None)
             self.sensors_page.set_remote_sensors(None)
             self.services_page.set_remote_services(None)
             self.autostart_page.set_remote_autostart(None)
             self.docker_page.set_remote_docker(None)
             return
         self.processes_page.set_remote_rows(payload.get("processes"))
+        self.memory_page.set_remote_data(payload)
         self.sensors_page.set_remote_sensors(payload.get("sensors"))
         self.services_page.set_remote_services(payload.get("services"))
         self.autostart_page.set_remote_autostart(payload.get("autostart"))
@@ -905,6 +910,7 @@ class MainWindow(QMainWindow):
     def _shut_down_pages(self) -> None:
         self.processes_page.shutdown()
         self.performance_page.shutdown()
+        self.memory_page.shutdown()
         self.sensors_page.shutdown()
         self.services_page.shutdown()
         self.docker_page.shutdown()

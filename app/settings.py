@@ -146,6 +146,14 @@ class Settings:
         self._store.setValue("smart_sudo_enabled", value)
 
     @property
+    def memory_cache_option(self) -> bool:
+        return self._store.value("memory_cache_option", False, type=bool)
+
+    @memory_cache_option.setter
+    def memory_cache_option(self, value: bool) -> None:
+        self._store.setValue("memory_cache_option", value)
+
+    @property
     def custom_qss(self) -> str:
         return self._store.value("custom_qss", "", type=str)
 

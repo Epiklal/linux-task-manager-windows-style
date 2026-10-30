@@ -36,6 +36,10 @@ def draw_nav_icon(painter: QPainter, kind: str, rect: QRectF, color: QColor) -> 
     elif kind == "performance":  # pulse line
         painter.drawPolyline([p(0.02, 0.55), p(0.28, 0.55), p(0.4, 0.2), p(0.58, 0.85),
                               p(0.7, 0.45), p(0.98, 0.45)])
+    elif kind == "memory":  # RAM module with contacts
+        painter.drawRoundedRect(QRectF(p(0.04, 0.28), p(0.96, 0.66)), 1.5, 1.5)
+        for fx in (0.22, 0.41, 0.6, 0.79):
+            painter.drawLine(p(fx, 0.66), p(fx, 0.84))
     elif kind == "sensors":  # thermometer
         painter.drawRoundedRect(QRectF(p(0.4, 0.04), p(0.6, 0.66)), 2, 2)
         painter.drawEllipse(QRectF(p(0.3, 0.6), p(0.7, 0.98)))
