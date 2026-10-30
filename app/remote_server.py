@@ -24,11 +24,53 @@ class BenchmarkBusyError(Exception):
     """Another benchmark is still running on this server."""
 
 
+def make_benchmark_runner(list_disks, worker_class):
+    """Returns the function that serves benchmark requests. One benchmark at a time;
+    the disks and the worker are parameters so this works without Qt in the tests."""
+    benchmark_lock = threading.Lock()
+
+    def run_benchmark(request: dict) -> dict:
+        kind = request.get("kind")
+        if kind not in {"cpu", "memory", "gpu", "disk"}:
+            raise ValueError("Unbekannter Benchmark")
+        # Clamp everything a client can send, so a request can't keep the server
+        # busy for days or spawn thousands of threads.
+        cpu_count = os.cpu_count() or 1
+        cpu_threads = min(max(int(request.get("cpu_threads", 1)), 1), cpu_count)
+        cpu_seconds = min(max(int(request.get("cpu_seconds", 30)), 1), MAX_BENCHMARK_SECONDS)
+        cpu_max_prime = min(max(int(request.get("cpu_max_prime", 1_000_000)), 100),
+                            MAX_PRIME_LIMIT)
+        # The disk test writes a 256 MiB file: only into a mount point of a
+        # physical disk, never into an arbitrary client-chosen directory.
+        allowed_dirs = [mount for disk in list_disks()
+                        for mount in disk.get("mountpoints") or []]
+        disk_directory = request.get("disk_directory")
+        if disk_directory not in allowed_dirs:
+            if kind == "disk" and disk_directory:
+                raise ValueError(f"Ziel nicht erlaubt: {disk_directory}")
+            disk_directory = allowed_dirs[0] if allowed_dirs else None
+        if not benchmark_lock.acquire(blocking=False):
+            raise BenchmarkBusyError("Auf dem Server läuft bereits ein Benchmark")
+        try:
+            worker = worker_class(
+                [kind], cpu_threads, cpu_seconds, cpu_max_prime, disk_directory)
+            result, details = getattr(worker, f"_run_{kind}")()
+        finally:
+            benchmark_lock.release()
+        return {"label": {"cpu": "CPU", "memory": "Arbeitsspeicher",
+                           "gpu": "GPU", "disk": "Datenträger"}[kind],
+                "result": result, "details": details}
+
+    return run_benchmark
+
+
 class MonitoringHandler(BaseHTTPRequestHandler):
     monitor: object
     snapshot: object
     token: str | None
     benchmark: object
+    # Slow or idle clients can't hold a server thread forever.
+    timeout = 30
 
     def _authorized(self) -> bool:
         token = type(self).token
@@ -77,7 +119,8 @@ class MonitoringHandler(BaseHTTPRequestHandler):
             self._send_json(result)
         except BenchmarkBusyError as error:
             self._send_json({"error": str(error)}, 409)
-        except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError) as error:
+        except (ValueError, KeyError, TypeError, OverflowError, RecursionError, OSError,
+                subprocess.SubprocessError) as error:
             self._send_json({"error": str(error)}, 400)
 
     def log_message(self, format: str, *args) -> None:
@@ -145,42 +188,7 @@ def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
         }
 
     MonitoringHandler.snapshot = full_snapshot
-
-    benchmark_lock = threading.Lock()
-
-    def run_benchmark(request: dict) -> dict:
-        kind = request.get("kind")
-        if kind not in {"cpu", "memory", "gpu", "disk"}:
-            raise ValueError("Unbekannter Benchmark")
-        # Clamp everything a client can send, so a request can't keep the server
-        # busy for days or spawn thousands of threads.
-        cpu_count = os.cpu_count() or 1
-        cpu_threads = min(max(int(request.get("cpu_threads", 1)), 1), cpu_count)
-        cpu_seconds = min(max(int(request.get("cpu_seconds", 30)), 1), MAX_BENCHMARK_SECONDS)
-        cpu_max_prime = min(max(int(request.get("cpu_max_prime", 1_000_000)), 100),
-                            MAX_PRIME_LIMIT)
-        # The disk test writes a 256 MiB file: only into a mount point of a
-        # physical disk, never into an arbitrary client-chosen directory.
-        allowed_dirs = [mount for disk in list_physical_disks()
-                        for mount in disk.get("mountpoints") or []]
-        disk_directory = request.get("disk_directory")
-        if disk_directory not in allowed_dirs:
-            if kind == "disk" and disk_directory:
-                raise ValueError(f"Ziel nicht erlaubt: {disk_directory}")
-            disk_directory = allowed_dirs[0] if allowed_dirs else None
-        if not benchmark_lock.acquire(blocking=False):
-            raise BenchmarkBusyError("Auf dem Server läuft bereits ein Benchmark")
-        try:
-            worker = BenchmarkWorker(
-                [kind], cpu_threads, cpu_seconds, cpu_max_prime, disk_directory)
-            result, details = getattr(worker, f"_run_{kind}")()
-        finally:
-            benchmark_lock.release()
-        return {"label": {"cpu": "CPU", "memory": "Arbeitsspeicher",
-                           "gpu": "GPU", "disk": "Datenträger"}[kind],
-                "result": result, "details": details}
-
-    MonitoringHandler.benchmark = run_benchmark
+    MonitoringHandler.benchmark = make_benchmark_runner(list_physical_disks, BenchmarkWorker)
     MonitoringHandler.token = token
     server = ThreadingHTTPServer((host, port), MonitoringHandler)
     display_host = host if host not in ("0.0.0.0", "::") else _local_ip()

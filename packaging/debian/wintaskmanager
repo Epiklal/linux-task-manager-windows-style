@@ -17,6 +17,17 @@ for py in "$VENV/bin/python" /usr/bin/python3; do
     fi
 done
 
-echo "wintaskmanager: Die Python-Module PySide6/psutil fehlen." >&2
-echo "Bitte einmalig ausführen:  sudo /usr/libexec/wintaskmanager/setup-venv" >&2
+message="wintaskmanager: Die Python-Module PySide6/psutil fehlen.
+Bitte einmalig im Terminal ausführen:  sudo /usr/libexec/wintaskmanager/setup-venv"
+echo "$message" >&2
+# Beim Start aus dem Menü sieht niemand stderr: dort gibt es einen Dialog.
+if [ ! -t 2 ] && { [ -n "$DISPLAY" ] || [ -n "$WAYLAND_DISPLAY" ]; }; then
+    if command -v zenity >/dev/null 2>&1; then
+        zenity --error --title=WinTaskManager --text="$message"
+    elif command -v kdialog >/dev/null 2>&1; then
+        kdialog --title WinTaskManager --error "$message"
+    elif command -v xmessage >/dev/null 2>&1; then
+        xmessage "$message"
+    fi
+fi
 exit 1

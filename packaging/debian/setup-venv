@@ -43,8 +43,6 @@ if ! "$VENV/bin/python" -m pip install --no-cache-dir "PySide6-Essentials>=6.6,<
 wintaskmanager: FEHLER - PySide6 konnte nicht heruntergeladen werden.
   Dafür wird eine Internetverbindung zu pypi.org benötigt (Proxy? Offline?).
   Danach die Einrichtung einfach wiederholen:
-      sudo dpkg --configure -a
-  oder direkt:
       sudo /usr/libexec/wintaskmanager/setup-venv
 
 MSG

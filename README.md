@@ -292,11 +292,14 @@ imported from the system packages:
   `psutil` comes from the system package). Nothing is installed into the system
   Python.
 
-If the download fails (no internet, proxy, pypi.org unreachable), `apt` reports the
-package as not fully installed and prints the reason (in German). Fix the cause and
-run `sudo dpkg --configure -a` (or `sudo /usr/libexec/wintaskmanager/setup-venv`);
-no reinstallation is needed. The launcher `wintaskmanager` uses the virtual
-environment when it exists and the system packages otherwise.
+If the download fails (no internet, proxy, pypi.org unreachable), the installation
+still finishes, with a warning, so `apt` stays usable. The program can't start until
+you fix the cause and run `sudo /usr/libexec/wintaskmanager/setup-venv`; no
+reinstallation is needed. Until then, the launcher names that command in the terminal
+or, when started from the menu, in a dialog (in German). The same applies to
+`apt install --no-install-recommends`, which only needs the download to succeed.
+The launcher `wintaskmanager` uses the virtual environment when it exists and the
+system packages otherwise.
 
 The package installs:
 
@@ -851,7 +854,7 @@ LiveChart {
 ```bash
 ./install.sh
 source .venv/bin/activate
-python -m unittest tests.test_startup
+QT_QPA_PLATFORM=offscreen python -m unittest discover -s tests -t .
 ```
 
 Project layout:

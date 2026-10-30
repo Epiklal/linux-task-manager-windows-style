@@ -57,6 +57,11 @@ jobs:
           # 137 = nach 20 s noch gelaufen (von timeout beendet), alles andere = Absturz
           test "$rc" -eq 137 || { echo "wintaskmanager beendete sich mit Code $rc"; exit 1; }
 
+      - name: Run unit tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: /opt/wintaskmanager/venv/bin/python -m unittest discover -s tests -t .
+
       - name: Remove package again
         run: |
           sudo apt-get purge -y wintaskmanager

@@ -13,9 +13,13 @@ case "$1" in
 
         # PySide6: Systempakete (Debian) oder virtuelle Umgebung per pip (Ubuntu/
         # Linux Mint haben keine PySide6-Pakete). Schlägt das fehl - z. B. ohne
-        # Internet -, bleibt das Paket unkonfiguriert; "sudo dpkg --configure -a"
-        # wiederholt die Einrichtung.
-        /usr/libexec/wintaskmanager/setup-venv
+        # Internet -, wird trotzdem fertig konfiguriert: ein halb installiertes Paket
+        # würde apt für das ganze System blockieren. Der Starter sagt beim nächsten
+        # Aufruf, was zu tun ist.
+        if ! /usr/libexec/wintaskmanager/setup-venv; then
+            echo "Warnung: WinTaskManager ist installiert, startet aber erst nach:" >&2
+            echo "    sudo /usr/libexec/wintaskmanager/setup-venv" >&2
+        fi
 
         if [ -d /run/systemd/system ]; then
             systemctl --system daemon-reload >/dev/null 2>&1 || true
