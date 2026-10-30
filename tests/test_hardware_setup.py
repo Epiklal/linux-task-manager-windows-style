@@ -12,6 +12,7 @@ from unittest import mock
 
 from app import hardware_setup
 from app.hardware_setup import HELPER_TARGET, PACKAGED_HELPERS, RAPL_UDEV_TARGET, SUDOERS_TARGET
+from app.i18n import language_override
 
 REPO = Path(__file__).resolve().parents[1]
 HELPER = REPO / "scripts" / "wintaskmanager-smartctl"
@@ -69,12 +70,13 @@ class TestSudoRule(unittest.TestCase):
 
 
 class TestSetupScriptRun(unittest.TestCase):
-    def run_script(self, visudo_rc=0):
+    def run_script(self, visudo_rc=0, language="en"):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         root = Path(directory.name)
         write_executable(root / "sudo", FAKE_SUDO)
-        with mock.patch.object(hardware_setup, "helper_path", return_value=HELPER_TARGET):
+        with (mock.patch.object(hardware_setup, "helper_path", return_value=HELPER_TARGET),
+              language_override(language)):
             script = hardware_setup.setup_script(str(HELPER), "alice", "alice")
         result = subprocess.run(
             ["bash", "-c", script], stdin=subprocess.DEVNULL, capture_output=True, text=True,
@@ -84,14 +86,20 @@ class TestSetupScriptRun(unittest.TestCase):
 
     def test_valid_rule_gets_installed(self):
         result, sudo_calls, root = self.run_script()
-        self.assertIn("SMART- und RAM-Daten können jetzt gelesen werden", result.stdout)
+        self.assertIn("SMART and memory data can now be read", result.stdout)
         self.assertTrue(any(SUDOERS_TARGET in call for call in sudo_calls))
         self.assertEqual((root / "rule").read_text(),
                          f"alice ALL=(root) NOPASSWD: {HELPER_TARGET} *\n")
 
+    def test_messages_follow_the_language(self):
+        result, _, _ = self.run_script(language="de")
+        self.assertIn("SMART- und RAM-Daten können jetzt gelesen werden", result.stdout)
+        result, _, _ = self.run_script(visudo_rc=1, language="de")
+        self.assertIn("es wurde keine sudo-Regel installiert", result.stdout)
+
     def test_rule_rejected_by_visudo_is_not_installed(self):
         result, sudo_calls, _ = self.run_script(visudo_rc=1)
-        self.assertIn("es wurde keine sudo-Regel installiert", result.stdout)
+        self.assertIn("no sudo rule was installed", result.stdout)
         self.assertFalse(any(SUDOERS_TARGET in call for call in sudo_calls))
 
 
@@ -138,7 +146,7 @@ class TestHelperScript(unittest.TestCase):
                 result = self.run_helper(device, script=script)
                 self.assertEqual(result.returncode, 2)
                 self.assertEqual(result.stdout, "")
-                self.assertIn("Ungültiges Blockgerät", result.stderr)
+                self.assertIn("Invalid block device", result.stderr)
 
     def test_no_argument_is_rejected(self):
         self.assertEqual(self.run_helper(script=self.stubbed_helper()).returncode, 2)
@@ -150,7 +158,7 @@ class TestHelperScript(unittest.TestCase):
     def test_block_device_gets_fixed_smartctl_arguments(self):
         device = block_device()
         if device is None:
-            self.skipTest("kein Blockgerät vorhanden")
+            self.skipTest("no block device available")
         result = self.run_helper(device, "--scan", "-s", "on", script=self.stubbed_helper())
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stdout.split(), ["smartctl", "--all", "--json=o", f"/dev/{device}"])

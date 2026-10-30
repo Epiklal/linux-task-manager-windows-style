@@ -7,7 +7,8 @@ performance graphs, sensors, services, Docker containers, autostart entries and
 hardware benchmarks in one PySide6 desktop application. A built-in **server mode**
 lets you watch a headless Linux server from your desktop.
 
-Built for Linux desktops running Wayland or X11. The user interface is in German.
+Built for Linux desktops running Wayland or X11. The user interface is available in
+English and German; it follows your system language and can be switched in the settings.
 
 ![Windows 10 design, light theme, performance view](docs/screenshots/win10-light-performance.png)
 
@@ -30,6 +31,8 @@ Built for Linux desktops running Wayland or X11. The user interface is in German
 
 ## Screenshots
 
+The screenshots show the German interface.
+
 | Windows 10, light | Windows 11, light |
 | --- | --- |
 | ![Process list in the Windows 10 design](docs/screenshots/win10-light-processes.png) | ![Process list in the Windows 11 design](docs/screenshots/win11-light-processes.png) |
@@ -38,20 +41,20 @@ Built for Linux desktops running Wayland or X11. The user interface is in German
 | Windows 10, dark | Windows 11, dark |
 | --- | --- |
 | ![One graph per logical processor](docs/screenshots/win10-dark-performance-cores.png) | ![Memory view in the Windows 11 design](docs/screenshots/win11-dark-performance.png) |
-| One graph per logical processor ("Pro Kern") | Memory usage |
+| One graph per logical processor ("Per core") | Memory usage |
 | ![GPU view](docs/screenshots/win10-dark-gpu.png) | ![Settings in the Windows 11 design](docs/screenshots/win11-dark-settings.png) |
-| GPU engines, dedicated and shared GPU memory | Settings: design, color scheme, refresh rates, remote server |
+| GPU engines, dedicated and shared GPU memory | Settings: language, design, color scheme, refresh rates, remote server |
 | ![Network view](docs/screenshots/win10-dark-network.png) | |
 | Network throughput, receive (solid) and send (dashed), auto-scaled | |
 
 | More tabs | |
 | --- | --- |
 | ![Services](docs/screenshots/win10-light-services.png) | ![Docker](docs/screenshots/win11-dark-docker.png) |
-| **Dienste**: all systemd services with description and status | **Docker**: containers with live CPU, memory and GPU usage (example containers) |
+| **Services**: all systemd services with description and status | **Docker**: containers with live CPU, memory and GPU usage (example containers) |
 | ![Autostart](docs/screenshots/win11-light-autostart.png) | ![Benchmarks](docs/screenshots/win10-dark-benchmarks.png) |
 | **Autostart**: user and system autostart entries, enable/disable | **Benchmarks**: CPU, memory, GPU and disk results |
 | ![Sensors](docs/screenshots/win10-dark-sensors.png) | |
-| **Sensoren**: every hardware sensor the kernel exposes | |
+| **Sensors**: every hardware sensor the kernel exposes | |
 
 **Color schemes** (here: Dracula, Nord, Catppuccin Latte, Tokyo Night in the Windows 11 design):
 
@@ -116,11 +119,11 @@ installer needs an internet connection for this download.
 | Location | Content |
 | --- | --- |
 | `<project folder>/.venv/` | Virtual environment with the Python packages |
-| `~/.local/share/applications/wintaskmanager.desktop` | **Task-Manager** entry in your application menu |
+| `~/.local/share/applications/wintaskmanager.desktop` | **Task Manager** entry in your application menu (**Task-Manager** on German systems) |
 | `~/.config/WinTaskManager/TaskManager.conf` | Your settings (created on first start, readable only by you) |
 
-Nothing else is changed on your system. The optional **Einstellungen →
-Hardwaredaten mit sudo einrichten** button additionally installs a small read-only
+Nothing else is changed on your system. The optional **Settings →
+Set up hardware data with sudo** button additionally installs a small read-only
 helper (`/usr/local/libexec/wintaskmanager-smartctl`) and a matching sudo rule
 (`/etc/sudoers.d/wintaskmanager-smartctl`) so SMART and RAM data can be read
 without typing your password every time. (The .deb already ships the helper as
@@ -296,7 +299,7 @@ If the download fails (no internet, proxy, pypi.org unreachable), the installati
 still finishes, with a warning, so `apt` stays usable. The program can't start until
 you fix the cause and run `sudo /usr/libexec/wintaskmanager/setup-venv`; no
 reinstallation is needed. Until then, the launcher names that command in the terminal
-or, when started from the menu, in a dialog (in German). The same applies to
+or, when started from the menu, in a dialog. The same applies to
 `apt install --no-install-recommends`, which only needs the download to succeed.
 The launcher `wintaskmanager` uses the virtual environment when it exists and the
 system packages otherwise.
@@ -307,8 +310,8 @@ The package installs:
 | --- | --- |
 | `/usr/share/wintaskmanager/` | The application (`main.py`, `app/`, `pages/`, `widgets/`), byte-compiled on installation |
 | `/usr/bin/wintaskmanager` | Launcher; `wintaskmanager --server` starts the server mode |
-| `/usr/share/applications/wintaskmanager.desktop` | Menu entry **Task-Manager** |
-| `/usr/libexec/wintaskmanager/wintaskmanager-smartctl` | Read-only helper for SMART and RAM data; **Hardwaredaten mit sudo einrichten** then only adds the sudo rule and the udev rule |
+| `/usr/share/applications/wintaskmanager.desktop` | Menu entry **Task Manager** |
+| `/usr/libexec/wintaskmanager/wintaskmanager-smartctl` | Read-only helper for SMART and RAM data; **Set up hardware data with sudo** then only adds the sudo rule and the udev rule |
 | `/usr/libexec/wintaskmanager/setup-venv` | Sets up PySide6 (system packages or `/opt/wintaskmanager/venv`); runs automatically during installation |
 | `/opt/wintaskmanager/venv/` | Only on Ubuntu/Linux Mint: virtual environment with PySide6 from PyPI; removed together with the package |
 | `/usr/lib/systemd/system/wintaskmanager-server.service` | systemd service for the server mode, not enabled by default (see [Remote monitoring](#remote-monitoring-server-mode)) |
@@ -345,7 +348,7 @@ The installed layout matches the Debian package, with these differences:
 
 | Path | Content |
 | --- | --- |
-| `/usr/lib/wintaskmanager/wintaskmanager-smartctl` | Read-only helper for SMART and RAM data (the .deb uses `/usr/libexec/`); **Hardwaredaten mit sudo einrichten** then only adds the sudo rule and the udev rule |
+| `/usr/lib/wintaskmanager/wintaskmanager-smartctl` | Read-only helper for SMART and RAM data (the .deb uses `/usr/libexec/`); **Set up hardware data with sudo** then only adds the sudo rule and the udev rule |
 | `/usr/lib/systemd/system/wintaskmanager-server.service` | systemd service for the server mode, not enabled by default |
 | `/etc/default/wintaskmanager-server` | Options for that service, e.g. the token; readable by root only (mode 600), kept as a `.pacsave` file on removal |
 | `/usr/share/licenses/wintaskmanager/LICENSE` | Copyright information |
@@ -356,7 +359,7 @@ are ignored by git.
 
 ## Run
 
-Start **Task-Manager** from your application menu. The entry sits in the *System*
+Start **Task Manager** from your application menu. The entry sits in the *System*
 category (Cinnamon: *Administration* / *System Tools*); typing `task` or
 `wintaskmanager` into the menu search finds it. From a terminal, with the Debian
 or Arch package:
@@ -451,7 +454,7 @@ rm -r ~/.config/WinTaskManager
 rm -r linux-task-manager-windows-style      # the project folder, including .venv
 ```
 
-If you used **Hardwaredaten mit sudo einrichten** with the installer script, also
+If you used **Set up hardware data with sudo** with the installer script, also
 remove the helper, its sudo rule and the RAPL udev rule (with the .deb or the Arch
 package the helper belongs to the package and is removed with it):
 
@@ -472,12 +475,13 @@ package manager if you no longer need them.
 
 ## Feature guide
 
-The tab names are the German names shown in the application.
+The tab names are the English ones; the German interface shows *Prozesse*, *Leistung*,
+*Sensoren*, *Dienste* and *Einstellungen* instead.
 
-### Prozesse (processes)
+### Processes
 
-- **Columns**: Name, Status, CPU, Arbeitsspeicher (memory), GPU, GPU-Speicher
-  (GPU memory), PID, Benutzer (user), Threads. Above CPU, memory, GPU and GPU memory
+- **Columns**: Name, Status, CPU, Memory, GPU, GPU memory, PID, User,
+  Threads. Above CPU, memory, GPU and GPU memory
   the header shows the overall usage, e.g. `7%` above *CPU*.
 - **Heat map**: the busier a process, the stronger its cells are colored (yellow in
   the Windows 10 design, blue in Windows 11, scheme colors otherwise).
@@ -491,24 +495,24 @@ The tab names are the German names shown in the application.
   bottom right, Windows 11: page header). You are asked for confirmation; the process
   first gets a normal terminate signal and is killed only if it does not exit within
   two seconds.
-- **Neuen Task ausführen** (run new task): enter a command, e.g. `firefox` or
-  `gnome-terminal --working-directory=/tmp` (Windows 10: menu *Datei*, Windows 11:
+- **Run new task**: enter a command, e.g. `firefox` or
+  `gnome-terminal --working-directory=/tmp` (Windows 10: menu *File*, Windows 11:
   page header).
-- **Datei starten** (menu *Datei*): choose an executable file to start.
+- **Start file** (menu *File*): choose an executable file to start.
 - **Drag & drop**: drop executable files from your file manager onto the list to
   start them.
 - Program icons come from your desktop icon theme.
 
-### Leistung (performance)
+### Performance
 
 The left column shows a small live graph for every device; click one to see details.
 
-- **CPU**: utilization graph for the last 60 seconds. **Pro Kern** switches to one
+- **CPU**: utilization graph for the last 60 seconds. **Per core** switches to one
   graph per logical processor. Below: utilization, speed, temperature, processes,
   uptime, cores, logical processors and power draw (if the kernel provides it).
-- **Arbeitsspeicher** (memory): usage graph; used, available, cached and total
+- **Memory**: usage graph; used, available, cached and total
   memory, RAM speed and module temperature.
-- **Datenträger** (one entry per physical disk): active time; read and write speed,
+- **Disk** (one entry per physical disk): active time; read and write speed,
   lifetime reads/writes, power cycles, power-on hours, used/total space and
   temperature (SMART values see [Hardware data notes](#hardware-data-notes)).
 - **Netzwerk** (network): receive (solid line) and send (dashed line). The graph
@@ -525,16 +529,16 @@ The left column shows a small live graph for every device; click one to see deta
     driver, driver version, physical location (PCI bus), PCIe generation and width,
     link status and power draw.
 
-### Sensoren (sensors)
+### Sensors
 
 Every hardware sensor the Linux kernel exposes (`/sys/class/hwmon`, no root
 needed): temperatures, fan speeds, voltages, power and more, with category, value,
 unit and source. Refreshes automatically; click a column header to sort.
 
-### Dienste (services)
+### Services
 
 All systemd services with description and status (read-only), with search and
-**Aktualisieren** (refresh). Requires `systemctl`; without it the tab only shows a
+**Refresh**. Requires `systemctl`; without it the tab only shows a
 short note.
 
 ### Docker
@@ -543,9 +547,9 @@ All containers (running and stopped) with image, status, CPU %, memory, memory
 limit, memory %, GPU % and GPU memory, colored with the same heat map as the process
 list. Search by name.
 
-- **Starten / Stoppen / Neustart / Entfernen**: start, stop, restart or remove the
+- **Start / Stop / Restart / Remove**: start, stop, restart or remove the
   selected container (removing asks for confirmation).
-- **★ Favorit**, **Bild wählen...** (custom picture) and **Umbenennen...** (custom
+- **★ Favorite**, **Choose image...** (custom picture) and **Rename...** (custom
   display name) make containers easier to find. These are stored only in your
   settings; the real container is not renamed.
 
@@ -562,29 +566,30 @@ the XDG specification intends.
 
 ### Benchmarks
 
-Choose the tests, set the options and click **Ausgewählte starten** (start
-selected). See [Benchmarks](#benchmarks) for details. The application stays
+Choose the tests, set the options and click **Start selected**. See [Benchmarks](#benchmarks) for details. The application stays
 responsive while a benchmark runs.
 
-### Einstellungen (settings)
+### Settings
 
-- **Darstellung**: design (Windows 10 / Windows 11) and color scheme.
-- **Aktualisierungsgeschwindigkeit**: refresh rate of the process list (200-5000 ms)
+- **Appearance**: language (*System default*, *Deutsch*, *English*), design
+  (Windows 10 / Windows 11) and color scheme. *System default* uses your locale and
+  falls back to English; a change applies immediately, without a restart.
+- **Refresh rate**: refresh rate of the process list (200-5000 ms)
   and of the performance graphs (100-5000 ms).
-- **Remote-Server**: connect to a machine running in server mode.
-- **Hardwaredaten (SMART und Arbeitsspeicher)**: one-time setup for SMART and RAM
+- **Remote server**: connect to a machine running in server mode.
+- **Hardware data (SMART, memory, CPU power)**: one-time setup for SMART and RAM
   data (see [What gets installed](#what-gets-installed)).
-- **Eigener Stil (QSS)**: your own style rules (see [Custom styling](#custom-styling-qss)).
+- **Custom style (QSS)**: your own style rules (see [Custom styling](#custom-styling-qss)).
 
 ### Menus (Windows 10 design)
 
-- **Datei**: Neuen Task ausführen, Datei starten…, Beenden (quit).
-- **Optionen**: Immer im Vordergrund (always on top; whether this works depends on
+- **File**: Run new task, Start file..., Exit.
+- **Options**: Always on top (whether this works depends on
   your window manager - some Wayland compositors ignore it).
-- **Ansicht**: Design and Farbschema.
+- **View**: Style and Color scheme.
 
 The Windows 11 design has no menu bar, just like the original: the commands are in
-the page headers, the options in **Einstellungen**.
+the page headers, the options in **Settings**.
 
 ### Mouse and keyboard tips
 
@@ -595,7 +600,7 @@ the page headers, the options in **Einstellungen**.
 
 ## Design and color schemes
 
-Open **Einstellungen → Darstellung**:
+Open **Settings → Appearance**:
 
 - **Design**: *Windows 10* (tabs, menu bar, footer) or *Windows 11* (navigation pane
   with icons, page headers, rounded controls, no menu bar or status bar).
@@ -605,7 +610,7 @@ Open **Einstellungen → Darstellung**:
 
 Every color scheme works with both designs and also changes the graph colors and
 the heat map. In the Windows 10 design both options are also in the menu under
-**Ansicht**. Changes apply immediately.
+**View**. Changes apply immediately.
 
 ## Remote monitoring (server mode)
 
@@ -635,9 +640,9 @@ wintaskmanager --server      # Debian package
 Example output:
 
 ```text
-WinTaskManager Server läuft auf http://192.168.1.20:8765
-Zugriffsschlüssel: 3f1Vw0...kQ
-Beenden mit Strg+C
+WinTaskManager server running on http://192.168.1.20:8765
+Access token: 3f1Vw0...kQ
+Press Ctrl+C to quit
 ```
 
 | Option | Default | Meaning |
@@ -655,12 +660,12 @@ If a firewall is active, open the port, e.g. `sudo ufw allow 8765/tcp`.
 
 ### 3. Connect from the desktop
 
-Open **Einstellungen → Remote-Server**, enable **Daten vom Server verwenden**,
-enter the server IP, port and access token, and click **Serververbindung
-anwenden**. The token is stored in your settings file, which only you can read.
+Open **Settings → Remote server**, enable **Use data from the server**,
+enter the server IP, port and access token, and click **Apply server
+connection**. The token is stored in your settings file, which only you can read.
 
-While connected, these tabs show the **server's** data: Leistung, Prozesse,
-Sensoren, Dienste, Docker and Autostart. Benchmarks started on the Benchmarks tab
+While connected, these tabs show the **server's** data: Performance, Processes,
+Sensors, Services, Docker and Autostart. Benchmarks started on the Benchmarks tab
 run **on the server**. Disable the checkbox to go back to local data.
 
 In remote mode the application is **read-only**: *Task beenden*, autostart changes
@@ -787,12 +792,12 @@ the selected filesystem. Compare runs made under similar conditions.
 ## Hardware data notes
 
 Hardware reporting is best-effort because Linux drivers and individual devices
-expose different data. Unavailable values are shown as *Nicht verfügbar* rather
+expose different data. Unavailable values are shown as *Not available* rather
 than guessed.
 
 - **SMART** values require a drive and connection adapter that forward SMART
   commands. Some USB enclosures do not expose all lifetime counters. Most values
-  need root rights; use **Hardwaredaten mit sudo einrichten** once (or the manual
+  need root rights; use **Set up hardware data with sudo** once (or the manual
   commands in [What gets installed](#what-gets-installed)).
 - **RAM speed and module temperature** need `dmidecode` (root, via the same helper)
   and a board that reports them.
@@ -800,7 +805,7 @@ than guessed.
   power sensor: RAPL (Intel since Sandy Bridge, AMD Zen; also the MMIO/TPMI
   variants) or, as a fallback, Zenpower. All CPU packages are added up; the
   whole-platform `psys` zone is skipped so nothing is counted twice. RAPL is
-  root-only since Linux 5.10; **Hardwaredaten mit sudo einrichten** makes it
+  root-only since Linux 5.10; **Set up hardware data with sudo** makes it
   readable for your user group. In a virtual machine there is usually no sensor.
 - **GPU** metrics use `nvidia-smi` for NVIDIA hardware and the Linux DRM/sysfs
   interface for AMD, Intel, and Nouveau drivers. Which engines are available depends
@@ -814,9 +819,9 @@ than guessed.
 
 ## Custom styling (QSS)
 
-**Einstellungen → Eigener Stil (QSS)** accepts Qt Style Sheet rules. Pick a
+**Settings → Custom style (QSS)** accepts Qt Style Sheet rules. Pick a
 template (whole application, tab bar, buttons, tables, performance tiles, charts)
-and click **Vorlage einfügen**, edit it and click **Stil anwenden**. Your rules are
+and click **Insert template**, edit it and click **Apply style**. Your rules are
 stored per user and applied on top of the selected design and color scheme.
 
 For example, this changes the chart colors:
@@ -829,7 +834,7 @@ LiveChart {
 }
 ```
 
-**Stil zurücksetzen** removes all custom rules.
+**Reset style** removes all custom rules.
 
 ## Security
 

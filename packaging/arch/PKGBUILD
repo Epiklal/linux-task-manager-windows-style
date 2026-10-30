@@ -1,35 +1,35 @@
 # Maintainer: Epiklal <https://github.com/Epiklal>
 #
-# Arch-Paket für WinTaskManager, gebaut direkt aus dem Git-Checkout
-# (kein source=-Download, kein AUR-Eintrag):
+# Arch package for WinTaskManager, built directly from the Git checkout
+# (no source= download, no AUR entry):
 #     cd packaging/arch && makepkg -si
-# makepkg zieht die Abhängigkeiten (pyside6, python-psutil, ...) per pacman nach.
-# Bei Änderungen am Programm vor dem nächsten Bau pkgrel erhöhen, sonst
-# aktualisiert pacman das installierte Paket nicht.
-# namcap meldet "File referenced in $startdir": gewollt, die Dateien kommen
-# aus dem Checkout (packaging/arch/ und zwei Ebenen darüber) statt aus source=.
+# makepkg installs the dependencies (pyside6, python-psutil, ...) through pacman.
+# Raise pkgrel before the next build when the program changes, otherwise
+# pacman does not update the installed package.
+# namcap reports "File referenced in $startdir": intended, the files come from
+# the checkout (packaging/arch/ and two levels above) instead of source=.
 
 pkgname=wintaskmanager
 pkgver=1.0.0
 pkgrel=1
-pkgdesc="Task-Manager für Linux im Windows-Stil: Prozesse, Leistung, Dienste, Autostart, Benchmarks, Fernüberwachung"
+pkgdesc="Windows-style task manager for Linux: processes, performance, services, autostart, benchmarks, remote monitoring"
 arch=('any')
 url="https://github.com/Epiklal/linux-task-manager-windows-style"
-# Das Projekt hat noch keine Lizenzdatei (siehe packaging/debian/copyright), daher
-# keine SPDX-Kennung; der Text landet unter /usr/share/licenses/wintaskmanager/.
+# The project has no license file yet (see packaging/debian/copyright), hence no
+# SPDX identifier; the text ends up in /usr/share/licenses/wintaskmanager/.
 license=('LicenseRef-Unspecified')
 depends=('python>=3.9' 'pyside6>=6.6' 'python-psutil')
-optdepends=('smartmontools: SMART-Werte, Temperaturen und Laufzeiten von Datenträgern'
-            'dmidecode: Details zu RAM-Modulen und Mainboard'
-            'lm_sensors: CPU- und Mainboard-Temperaturen'
-            'pciutils: Erkennung von GPUs und anderen Geräten (lspci)'
-            'sysbench: CPU- und RAM-Benchmarks'
-            'fio: Datenträger-Benchmarks'
-            'glmark2: GPU-Benchmark'
-            'qt6-wayland: native Darstellung unter Wayland'
-            'sudo: Einrichtung der Hardwaredaten (smartctl/dmidecode) aus der App heraus'
-            'docker: Container-Übersicht'
-            'nvidia-utils: Daten von NVIDIA-Grafikkarten (nvidia-smi)')
+optdepends=('smartmontools: SMART values, temperatures and power-on times of disks'
+            'dmidecode: details about memory modules and the mainboard'
+            'lm_sensors: CPU and mainboard temperatures'
+            'pciutils: detection of GPUs and other devices (lspci)'
+            'sysbench: CPU and memory benchmarks'
+            'fio: disk benchmarks'
+            'glmark2: GPU benchmark'
+            'qt6-wayland: native rendering on Wayland'
+            'sudo: setting up hardware data (smartctl/dmidecode) from within the app'
+            'docker: container overview'
+            'nvidia-utils: data from NVIDIA graphics cards (nvidia-smi)')
 backup=('etc/default/wintaskmanager-server')
 install=wintaskmanager.install
 
@@ -37,7 +37,7 @@ package() {
     local repo="$startdir/../.."
     local share="$pkgdir/usr/share/$pkgname"
 
-    # Programmdateien - ohne Caches und Editor-Reste (wie build-deb.sh).
+    # Program files - without caches and editor leftovers (like build-deb.sh).
     install -d "$share"
     cp "$repo/main.py" "$share/"
     cp -r "$repo/app" "$repo/pages" "$repo/widgets" "$share/"
@@ -45,23 +45,23 @@ package() {
         -prune -exec rm -rf {} +
     find "$share" -type d -exec chmod 755 {} +
     find "$share" -type f -exec chmod 644 {} +
-    # Bytecode gleich mit ins Paket, damit pacman ihn kennt und beim Entfernen löscht.
+    # Bytecode goes into the package too, so pacman knows it and removes it later.
     python -m compileall -q -d "/usr/share/$pkgname" "$share"
 
     install -Dm755 "$startdir/wintaskmanager" "$pkgdir/usr/bin/$pkgname"
-    # Privilegierter Helfer für smartctl/dmidecode; die App legt die sudo-Regel dafür an.
+    # Privileged helper for smartctl/dmidecode; the app creates the sudo rule for it.
     install -Dm755 "$repo/scripts/wintaskmanager-smartctl" "$pkgdir/usr/lib/$pkgname/wintaskmanager-smartctl"
 
-    # Menüeintrag: dieselbe Vorlage wie install.sh, nur mit dem Starter aus /usr/bin.
+    # Menu entry: same template as install.sh, only with the launcher from /usr/bin.
     install -d "$pkgdir/usr/share/applications"
     sed -e 's|^Exec=.*|TryExec=wintaskmanager\nExec=wintaskmanager|' "$repo/wintaskmanager.desktop.in" \
         > "$pkgdir/usr/share/applications/$pkgname.desktop"
     chmod 644 "$pkgdir/usr/share/applications/$pkgname.desktop"
 
-    # Fernüberwachung als systemd-Dienst (optional, siehe .install-Hinweise).
+    # Remote monitoring as a systemd service (optional, see the .install notes).
     install -Dm644 "$repo/packaging/debian/wintaskmanager-server.service" \
         "$pkgdir/usr/lib/systemd/system/wintaskmanager-server.service"
-    # Enthält später den Zugriffsschlüssel, daher nur für root lesbar.
+    # Will hold the access token, so only root can read it.
     install -Dm600 "$repo/packaging/debian/wintaskmanager-server.default" \
         "$pkgdir/etc/default/$pkgname-server"
 

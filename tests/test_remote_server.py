@@ -15,6 +15,7 @@ from http.server import ThreadingHTTPServer
 from unittest import mock
 
 from app import remote_server
+from app.i18n import current_language
 from app.remote_server import (
     MAX_BENCHMARK_SECONDS,
     MAX_PRIME_LIMIT,
@@ -249,6 +250,27 @@ class TestBenchmarkClamping(unittest.TestCase):
         run_benchmark = make_benchmark_runner(lambda: [], FakeWorker)
         run_benchmark({"kind": "disk"})
         self.assertIsNone(FakeWorker.created[-1].disk_directory)
+
+
+class TestBenchmarkLanguage(unittest.TestCase):
+    def setUp(self):
+        self.run_benchmark = make_benchmark_runner(lambda: DISKS, FakeWorker)
+
+    def test_clients_without_a_language_keep_getting_german(self):
+        self.assertEqual(self.run_benchmark({"kind": "memory"})["label"], "Arbeitsspeicher")
+        with self.assertRaisesRegex(ValueError, "Unbekannter Benchmark"):
+            self.run_benchmark({"kind": "nonsense"})
+
+    def test_the_requested_language_is_used(self):
+        request = {"kind": "memory", "language": "en"}
+        self.assertEqual(self.run_benchmark(request)["label"], "Memory")
+        with self.assertRaisesRegex(ValueError, "Unknown benchmark"):
+            self.run_benchmark({"kind": "nonsense", "language": "en"})
+
+    def test_a_request_leaves_the_server_language_alone(self):
+        before = current_language()
+        self.run_benchmark({"kind": "memory", "language": "de" if before == "en" else "en"})
+        self.assertEqual(current_language(), before)
 
 
 class TestBenchmarkLock(ServerTestCase):

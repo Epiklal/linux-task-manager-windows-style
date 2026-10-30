@@ -28,7 +28,7 @@ class ScriptTestCase(unittest.TestCase):
         # stderr is a pipe here, exactly like a start from the desktop menu.
         return subprocess.run(["/bin/sh", str(path), *args], stdin=subprocess.DEVNULL,
                               capture_output=True, text=True,
-                              env={"PATH": str(self.root), **(env or {})})
+                              env={"PATH": str(self.root), "LANG": "C", **(env or {})})
 
 
 class TestStarterWithoutPySide6(ScriptTestCase):
@@ -91,6 +91,14 @@ class TestPostinst(ScriptTestCase):
     def test_failed_download_does_not_leave_apt_blocked(self):
         result = self.configure(setup_rc=1)
         self.assertEqual(result.returncode, 0)
+        self.assertIn("Warning", result.stderr)
+
+    def test_warning_follows_the_locale(self):
+        stub = self.root / "setup-venv-stub"
+        write_executable(stub, "#!/bin/sh\nexit 1\n")
+        postinst = self.root / "postinst"
+        postinst.write_text((DEBIAN / "postinst").read_text().replace(SETUP_VENV, str(stub)))
+        result = self.run_script(postinst, "configure", env={"LANG": "de_DE.UTF-8"})
         self.assertIn("Warnung", result.stderr)
 
     def test_successful_setup_is_silent(self):

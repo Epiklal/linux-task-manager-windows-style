@@ -13,6 +13,8 @@ import os
 import shlex
 import shutil
 
+from app.i18n import tr
+
 # Installed by the distribution packages: the .deb (build-deb.sh) under /usr/libexec,
 # the Arch package (packaging/arch/PKGBUILD) under /usr/lib. Packages stay out of
 # /usr/local, so the manual setup uses a different path.
@@ -93,6 +95,11 @@ def rapl_udev_rule(group: str) -> str:
             f'RUN+="{_system_binary("chmod")} g+r {energy}"')
 
 
+def _echo(text: str) -> str:
+    """Shell command that prints the translated `text`."""
+    return "echo " + shlex.quote(tr(text))
+
+
 def _rapl_steps(group: str) -> list[str]:
     """Bash lines that unlock the RAPL counters now and install the boot-time rule."""
     rule = rapl_udev_rule(group)
@@ -102,28 +109,25 @@ def _rapl_steps(group: str) -> list[str]:
         "shopt -s nullglob",
         f"rapl=({RAPL_ENERGY_GLOB})",
         'if [ "${#rapl[@]}" -eq 0 ]; then',
-        "    echo 'Kein RAPL-Energiezähler gefunden: der Kernel bietet für diese CPU keine "
-        "Leistungsaufnahme an.'",
+        "    " + _echo("No RAPL energy counter found: the kernel offers no power reading for this CPU."),
         f'elif sudo chgrp {shlex.quote(group)} "${{rapl[@]}}" && sudo chmod g+r "${{rapl[@]}}"; then',
         "    if [ -e /etc/NIXOS ]; then",
-        "        echo 'Fertig bis zum nächsten Neustart. Für dauerhaft in "
-        "/etc/nixos/configuration.nix eintragen:'",
+        "        " + _echo("Done until the next reboot. To make it permanent, add this to "
+                           "/etc/nixos/configuration.nix:"),
         f"        printf '  %s\\n' {shlex.quote(nix_option)}",
         "    elif ! command -v udevadm >/dev/null; then",
-        "        echo 'Fertig bis zum nächsten Neustart (kein udev vorhanden, daher keine "
-        "dauerhafte Regel).'",
+        "        " + _echo("Done until the next reboot (no udev available, so no permanent rule)."),
         "    else",
         f"        printf '%s\\n' {shlex.quote(rule)} > \"$tmp\"",
         f'        if sudo install -m 0644 -o root -g root "$tmp" {RAPL_UDEV_TARGET}; then',
         "            sudo udevadm control --reload 2>/dev/null",
-        "            echo 'Fertig: Die CPU-Leistungsaufnahme kann jetzt gelesen werden.'",
+        "            " + _echo("Done: the CPU power draw can now be read."),
         "        else",
-        "            echo 'Fertig bis zum nächsten Neustart - die udev-Regel konnte nicht "
-        "installiert werden.'",
+        "            " + _echo("Done until the next reboot - the udev rule could not be installed."),
         "        fi",
         "    fi",
         "else",
-        "    echo 'CPU-Leistungsaufnahme konnte nicht freigegeben werden.'",
+        "    " + _echo("The CPU power reading could not be enabled."),
         "fi",
     ]
 
@@ -141,26 +145,26 @@ def setup_script(helper_source: str, username: str, group: str) -> str:
                        f" && sudo install -m 0755 {shlex.quote(helper_source)} {HELPER_TARGET}")
     install_packages = package_install_command()
     if install_packages:
-        packages_step = (
-            f"{install_packages} || echo 'Warnung: smartmontools/dmidecode konnten nicht "
-            "installiert werden - bitte mit der Paketverwaltung nachinstallieren.'"
+        packages_step = f"{install_packages} || " + _echo(
+            "Warning: smartmontools/dmidecode could not be installed - "
+            "please install them with your package manager."
         )
     else:
-        packages_step = ("echo 'Unbekannte Paketverwaltung: bitte smartmontools und "
-                         "dmidecode selbst installieren.'")
+        packages_step = _echo("Unknown package manager: please install smartmontools "
+                              "and dmidecode yourself.")
     return "\n".join([
-        "echo '== WinTaskManager: Hardwaredaten einrichten =='",
+        _echo("== WinTaskManager: setting up hardware data =="),
         packages_step,
         'tmp="$(mktemp)"',
         f"printf '%s\\n' {shlex.quote(rule)} > \"$tmp\"",
         f"if {helper_step}"
         ' && sudo visudo -cf "$tmp"'
         f' && sudo install -m 0440 -o root -g root "$tmp" {SUDOERS_TARGET}; then',
-        "    echo; echo 'Fertig: SMART- und RAM-Daten können jetzt gelesen werden.'",
+        "    echo; " + _echo("Done: SMART and memory data can now be read."),
         "else",
-        "    echo; echo 'Einrichtung fehlgeschlagen - es wurde keine sudo-Regel installiert.'",
+        "    echo; " + _echo("Setup failed - no sudo rule was installed."),
         "fi",
         *_rapl_steps(group),
         'rm -f "$tmp"',
-        "echo; read -r -p 'Zum Schließen Enter drücken ' _",
+        "echo; read -r -p " + shlex.quote(tr("Press Enter to close ")) + " _",
     ])

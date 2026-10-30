@@ -25,14 +25,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.i18n import N_, format_decimal, tr
 from app.system_info import StoppableWorker, WorkerStopped, list_physical_disks
 from app.remote_client import RemoteBenchmarkWorker
 
 _BENCHMARKS = {
-    "cpu": ("CPU", "sysbench"),
-    "memory": ("Arbeitsspeicher", "sysbench"),
-    "gpu": ("GPU", "glmark2"),
-    "disk": ("Datenträger", "fio"),
+    "cpu": (N_("CPU"), "sysbench"),
+    "memory": (N_("Memory"), "sysbench"),
+    "gpu": (N_("GPU"), "glmark2"),
+    "disk": (N_("Disk"), "fio"),
 }
 
 
@@ -45,7 +46,7 @@ def _writable_dir_on(mountpoint: str) -> str:
     try:
         device = os.stat(mountpoint).st_dev
     except OSError as error:
-        raise ValueError(f"Ziel nicht erreichbar: {mountpoint}") from error
+        raise ValueError(tr("Target not reachable: {mountpoint}", mountpoint=mountpoint)) from error
     home = os.path.expanduser("~")
     candidates = [mountpoint, os.environ.get("XDG_CACHE_HOME") or os.path.join(home, ".cache"),
                   home, "/var/tmp", "/tmp"]
@@ -55,7 +56,7 @@ def _writable_dir_on(mountpoint: str) -> str:
                 return candidate
         except OSError:
             continue
-    raise ValueError(f"Keine Schreibrechte auf {mountpoint} - bitte ein anderes Ziel wählen")
+    raise ValueError(tr("No write permission on {mountpoint} - please choose another target", mountpoint=mountpoint))
 
 
 class BenchmarkWorker(StoppableWorker):
@@ -76,17 +77,18 @@ class BenchmarkWorker(StoppableWorker):
             if self._stop_event.is_set():
                 return
             label, command = _BENCHMARKS[benchmark]
+            label = tr(label)
             if not shutil.which(command):
-                self.resultReady.emit(label, "Nicht verfügbar", f"{command} ist nicht installiert")
+                self.resultReady.emit(label, tr("Not available"), tr("{command} is not installed", command=command))
                 continue
-            self.resultReady.emit(label, "Läuft", "")
+            self.resultReady.emit(label, tr("Running"), "")
             try:
                 result, details = getattr(self, f"_run_{benchmark}")()
                 self.resultReady.emit(label, result, details)
             except WorkerStopped:
                 return
             except (OSError, subprocess.SubprocessError, ValueError, KeyError) as error:
-                self.resultReady.emit(label, "Fehlgeschlagen", str(error))
+                self.resultReady.emit(label, tr("Failed"), str(error))
         self.finished.emit()
 
     def _run_cpu(self) -> tuple[str, str]:
@@ -99,10 +101,11 @@ class BenchmarkWorker(StoppableWorker):
         ).stdout
         match = re.search(r"events per second:\s+([\d.]+)", output)
         if not match:
-            raise ValueError("CPU-Ergebnis konnte nicht gelesen werden")
-        return (f"{float(match.group(1)):.1f} Ereignisse/s",
-            f"sysbench CPU, {self._cpu_threads} Threads, {self._cpu_seconds} s, "
-            f"Primzahlen bis {self._cpu_max_prime:,}")
+            raise ValueError(tr("Could not read the CPU result"))
+        return (tr("{value} events/s", value=format_decimal(float(match.group(1)))),
+            tr("sysbench CPU, {threads} threads, {seconds} s, primes up to {prime}",
+               threads=self._cpu_threads, seconds=self._cpu_seconds,
+               prime=f"{self._cpu_max_prime:,}"))
 
     def _run_memory(self) -> tuple[str, str]:
         output = self._run_command(
@@ -111,8 +114,8 @@ class BenchmarkWorker(StoppableWorker):
         ).stdout
         match = re.search(r"\(([\d.]+) MiB/sec\)", output)
         if not match:
-            raise ValueError("RAM-Ergebnis konnte nicht gelesen werden")
-        return f"{float(match.group(1)):.0f} MiB/s", "sysbench Speicher, 1 GiB"
+            raise ValueError(tr("Could not read the RAM result"))
+        return f"{float(match.group(1)):.0f} MiB/s", tr("sysbench memory, 1 GiB")
 
     def _run_gpu(self) -> tuple[str, str]:
         output = self._run_command(
@@ -120,12 +123,12 @@ class BenchmarkWorker(StoppableWorker):
         ).stdout
         match = re.search(r"glmark2 Score:\s*(\d+)", output)
         if not match:
-            raise ValueError("GPU-Ergebnis konnte nicht gelesen werden")
-        return f"Punktzahl {match.group(1)}", "glmark2 Offscreen, Szene Refract"
+            raise ValueError(tr("Could not read the GPU result"))
+        return tr("Score {score}", score=match.group(1)), tr("glmark2 offscreen, Refract scene")
 
     def _run_disk(self) -> tuple[str, str]:
         if not self._disk_directory:
-            raise ValueError("Kein eingebundenes Datenträger-Ziel ausgewählt")
+            raise ValueError(tr("No mounted disk target selected"))
         work_dir = _writable_dir_on(self._disk_directory)
         with tempfile.TemporaryDirectory(
             prefix="wintaskmanager-benchmark-", dir=work_dir,
@@ -141,7 +144,7 @@ class BenchmarkWorker(StoppableWorker):
         data = json.loads(output)
         bandwidth = data["jobs"][0]["read"]["bw_bytes"]
         return (f"{bandwidth / (1024 ** 2):.0f} MiB/s",
-            f"fio Lesen auf {self._disk_directory}, temporäre 256-MiB-Datei")
+            tr("fio read on {directory}, temporary 256 MiB file", directory=self._disk_directory))
 
 
 class BenchmarksPage(QWidget):
@@ -153,38 +156,38 @@ class BenchmarksPage(QWidget):
         self.checkboxes = {}
         controls = QHBoxLayout()
         for key, (label, _) in _BENCHMARKS.items():
-            checkbox = QCheckBox(label)
+            checkbox = QCheckBox(tr(label))
             checkbox.setChecked(True)
             self.checkboxes[key] = checkbox
             controls.addWidget(checkbox)
         self.cpu_threads = QSpinBox()
         self.cpu_threads.setRange(1, os.cpu_count() or 1)
         self.cpu_threads.setValue(os.cpu_count() or 1)
-        self.cpu_threads.setSuffix(" CPU-Threads")
+        self.cpu_threads.setSuffix(tr(" CPU threads"))
         controls.addWidget(self.cpu_threads)
         self.cpu_seconds = QSpinBox()
         self.cpu_seconds.setRange(5, 300)
         self.cpu_seconds.setValue(30)
-        self.cpu_seconds.setSuffix(" s CPU-Test")
+        self.cpu_seconds.setSuffix(tr(" s CPU test"))
         controls.addWidget(self.cpu_seconds)
         self.cpu_max_prime = QSpinBox()
         self.cpu_max_prime.setRange(10_000, 10_000_000)
         self.cpu_max_prime.setSingleStep(100_000)
         self.cpu_max_prime.setValue(1_000_000)
-        self.cpu_max_prime.setSuffix(" Primzahlgrenze")
+        self.cpu_max_prime.setSuffix(tr(" prime limit"))
         controls.addWidget(self.cpu_max_prime)
         self.disk_target = QComboBox()
         self._populate_disk_targets()
         controls.addWidget(self.disk_target)
         controls.addStretch(1)
-        self.start_button = QPushButton("Ausgewählte starten")
+        self.start_button = QPushButton(tr("Start selected"))
         self.start_button.clicked.connect(self.start_selected)
         controls.addWidget(self.start_button)
 
-        self.status = QLabel("Bereit")
+        self.status = QLabel(tr("Ready"))
         self.status.setObjectName("detailInfo")
         self.results = QTableWidget(0, 3)
-        self.results.setHorizontalHeaderLabels(["Bereich", "Ergebnis", "Test"])
+        self.results.setHorizontalHeaderLabels([tr("Area"), tr("Result"), tr("Test")])
         self.results.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.results.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.results.verticalHeader().setVisible(False)
@@ -200,11 +203,11 @@ class BenchmarksPage(QWidget):
     def start_selected(self) -> None:
         selected = [key for key, checkbox in self.checkboxes.items() if checkbox.isChecked()]
         if not selected:
-            QMessageBox.information(self, "Benchmarks", "Bitte mindestens einen Test auswählen.")
+            QMessageBox.information(self, tr("Benchmarks"), tr("Please select at least one test."))
             return
         self.results.setRowCount(0)
         self.start_button.setEnabled(False)
-        self.status.setText("Benchmark läuft. Die Oberfläche bleibt bedienbar.")
+        self.status.setText(tr("Benchmark running. The interface stays usable."))
         if self._remote_config:
             host, port, token = self._remote_config
             self.worker = RemoteBenchmarkWorker(
@@ -226,13 +229,13 @@ class BenchmarksPage(QWidget):
 
     def set_remote_connection(self, enabled: bool, host: str, port: int, token: str) -> None:
         self._remote_config = (host, port, token) if enabled else None
-        self.status.setText("Remote-Benchmark aktiv" if enabled else "Lokale Benchmarks aktiv")
+        self.status.setText(tr("Remote benchmark active") if enabled else tr("Local benchmarks active"))
 
     def _add_result(self, area: str, result: str, details: str) -> None:
-        # One row per test: the "Läuft" (running) row is replaced by the result.
+        # One row per test: the "Running" row is replaced by the result.
         row = next((r for r in range(self.results.rowCount())
                     if self.results.item(r, 0).text() == area
-                    and self.results.item(r, 1).text() == "Läuft"), None)
+                    and self.results.item(r, 1).text() == tr("Running")), None)
         if row is None:
             row = self.results.rowCount()
             self.results.insertRow(row)
@@ -240,11 +243,11 @@ class BenchmarksPage(QWidget):
             self.results.setItem(row, column, QTableWidgetItem(value))
 
     def _on_finished(self) -> None:
-        self.status.setText("Benchmark abgeschlossen")
+        self.status.setText(tr("Benchmark finished"))
         self.start_button.setEnabled(True)
 
     def _populate_disk_targets(self) -> None:
-        self.disk_target.addItem("Datenträger-Ziel auswählen", None)
+        self.disk_target.addItem(tr("Select disk target"), None)
         for disk in list_physical_disks():
             for mountpoint in disk["mountpoints"]:
                 label = f"{disk['model']} ({disk['device']}) - {mountpoint}"

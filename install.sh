@@ -14,10 +14,10 @@ DESKTOP_FILE="$DESKTOP_DIR/wintaskmanager.desktop"
 on_error() {
     local rc=$? line=$1 cmd=$2
     echo >&2
-    echo "FEHLER: Die Installation ist abgebrochen (Zeile $line, Exit-Code $rc):" >&2
+    echo "ERROR: The installation was aborted (line $line, exit code $rc):" >&2
     echo "    $cmd" >&2
-    echo "Häufige Ursachen: keine Internetverbindung, kein sudo-Recht, fehlendes Paket python3-venv." >&2
-    echo "Nach dem Beheben einfach ./install.sh erneut starten." >&2
+    echo "Common causes: no Internet connection, no sudo rights, missing package python3-venv." >&2
+    echo "After fixing it, simply run ./install.sh again." >&2
 }
 trap 'on_error $LINENO "$BASH_COMMAND"' ERR
 
@@ -56,13 +56,13 @@ fi
 SUDO="sudo"
 if [[ $EUID -eq 0 ]]; then
     if [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != "root" ]]; then
-        echo "Bitte ./install.sh ohne sudo starten - das Skript fragt selbst nach dem Passwort." >&2
-        echo "(Mit sudo landen die virtuelle Umgebung und der Menüeintrag beim Benutzer root.)" >&2
+        echo "Please run ./install.sh without sudo - the script asks for the password itself." >&2
+        echo "(With sudo the virtual environment and the menu entry would belong to the user root.)" >&2
         exit 1
     fi
     SUDO=""
 elif ! command -v sudo >/dev/null; then
-    echo "Warnung: sudo fehlt - Systempakete werden übersprungen. Bitte als root nachinstallieren:" >&2
+    echo "Warning: sudo is missing - skipping system packages. Please install them as root:" >&2
     echo "    ${REQUIRED[*]} ${OPTIONAL[*]}" >&2
     PM=""
 fi
@@ -80,21 +80,21 @@ pm_install() {
 MISSING_OPTIONAL=()
 install_system_packages() {
     if [[ -z "$PM" ]]; then
-        echo "Unbekannte Paketverwaltung - Systempakete werden übersprungen." >&2
-        echo "Benötigt: Python 3 mit venv und pip. Optional: smartmontools, lm-sensors," >&2
+        echo "Unknown package manager - skipping system packages." >&2
+        echo "Required: Python 3 with venv and pip. Optional: smartmontools, lm-sensors," >&2
         echo "dmidecode, sysbench, fio, glmark2, pciutils, xcb-cursor." >&2
         return
     fi
-    echo "Installiere Systempakete ($PM) ..."
+    echo "Installing system packages ($PM) ..."
     # (No "pacman -Sy" on Arch: refreshing without upgrading causes partial upgrades.)
     if [[ "$PM" == "apt" ]]; then
-        $SUDO apt-get update || echo "Warnung: apt-get update fehlgeschlagen." >&2
+        $SUDO apt-get update || echo "Warning: apt-get update failed." >&2
     fi
     if ! pm_install "${REQUIRED[@]}"; then
         # xcb-cursor may be named differently on old releases; Python is what matters.
-        echo "Warnung: nicht alle Pflichtpakete (${REQUIRED[*]}) konnten installiert werden." >&2
+        echo "Warning: not all required packages (${REQUIRED[*]}) could be installed." >&2
         if [[ "$PM" == "pacman" ]]; then
-            echo "Auf Arch hilft meist ein vorheriges 'sudo pacman -Syu' (veraltete Paketdatenbank)." >&2
+            echo "On Arch, running 'sudo pacman -Syu' first usually helps (outdated package database)." >&2
         fi
     fi
     # Try all optional packages at once; if that fails, one by one.
@@ -108,11 +108,11 @@ install_system_packages() {
 install_system_packages
 
 if ! command -v python3 >/dev/null; then
-    echo "Python 3 wurde nicht gefunden. Bitte Python 3 installieren und erneut starten." >&2
+    echo "Python 3 was not found. Please install Python 3 and run this again." >&2
     exit 1
 fi
 if ! python3 -c 'import sys; sys.exit(sys.version_info < (3, 9))'; then
-    echo "Python $(python3 --version 2>&1 | cut -d' ' -f2) ist zu alt - benötigt wird Python 3.9 oder neuer." >&2
+    echo "Python $(python3 --version 2>&1 | cut -d' ' -f2) is too old - Python 3.9 or newer is required." >&2
     exit 1
 fi
 
@@ -123,24 +123,24 @@ SYSTEM_QT_CHECK='import sys
 import PySide6, PySide6.QtCore, PySide6.QtGui, PySide6.QtWidgets, psutil
 sys.exit(PySide6.__version_info__ < (6, 6))'
 if python3 -c "$SYSTEM_QT_CHECK" 2>/dev/null; then
-    QT_SOURCE="Systempaket (PySide6 $(python3 -c 'import PySide6; print(PySide6.__version__)'))"
-    echo "PySide6 und psutil sind als Systempakete vorhanden - kein Download nötig."
+    QT_SOURCE="System package (PySide6 $(python3 -c 'import PySide6; print(PySide6.__version__)'))"
+    echo "PySide6 and psutil are available as system packages - no download needed."
     # A venv from an earlier run may still hold its own (older) PySide6 copy;
     # recreating it costs nothing because nothing has to be downloaded.
     [[ -e "$VENV_DIR" ]] && rm -rf "$VENV_DIR"
-    echo "Lege virtuelle Umgebung an: $VENV_DIR"
+    echo "Creating virtual environment: $VENV_DIR"
     python3 -m venv --system-site-packages --without-pip "$VENV_DIR"
 else
     QT_SOURCE="pip (in $VENV_DIR)"
-    echo "Lege virtuelle Umgebung an: $VENV_DIR"
+    echo "Creating virtual environment: $VENV_DIR"
     if ! python3 -m venv "$VENV_DIR"; then
-        echo "FEHLER: 'python3 -m venv' schlug fehl. Auf Debian/Ubuntu/Mint fehlt dann meist das Paket python3-venv:" >&2
+        echo "ERROR: 'python3 -m venv' failed. On Debian/Ubuntu/Mint this usually means the package python3-venv is missing:" >&2
         echo "    sudo apt install python3-venv" >&2
         exit 1
     fi
     "$VENV_DIR/bin/python" -m pip install --quiet --upgrade pip \
-        || echo "Warnung: pip konnte nicht aktualisiert werden - weiter mit der vorhandenen Version." >&2
-    echo "Installiere Python-Pakete (PySide6 ist ~100 MB - das kann einige Minuten dauern) ..."
+        || echo "Warning: pip could not be updated - continuing with the existing version." >&2
+    echo "Installing Python packages (PySide6 is ~100 MB - this can take a few minutes) ..."
     "$VENV_DIR/bin/python" -m pip install -r "$APP_DIR/requirements.txt"
 fi
 
@@ -154,10 +154,10 @@ sed "s|@APP_DIR@|$escaped_app_dir|g" "$APP_DIR/wintaskmanager.desktop.in" > "$DE
 chmod 644 "$DESKTOP_FILE"
 
 echo
-echo "Installation abgeschlossen."
+echo "Installation finished."
 echo "Qt/PySide6: $QT_SOURCE"
 if (( ${#MISSING_OPTIONAL[@]} )); then
-    echo "Nicht verfügbar (optional, die zugehörigen Werte/Benchmarks fehlen dann): ${MISSING_OPTIONAL[*]}"
+    echo "Not available (optional, the related values/benchmarks will be missing): ${MISSING_OPTIONAL[*]}"
 fi
-echo "Start im Terminal: $APP_DIR/run.sh"
-echo "Startmenü-Eintrag: Task-Manager"
+echo "Start in a terminal: $APP_DIR/run.sh"
+echo "Application menu entry: Task Manager"

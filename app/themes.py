@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from app.i18n import N_
+
 
 @dataclass(frozen=True)
 class Scheme:
@@ -38,10 +40,10 @@ WIN10_DARK_CHART_COLORS = {"cpu": "#3a9ee8", "memory": "#b35ad6", "disk": "#6cc1
                            "network": "#e08a2e", "gpu": "#3a9ee8"}
 
 SCHEMES: dict[str, Scheme] = {s.key: s for s in [
-    Scheme("light", "Hell (Standard)", False, "#ffffff", "#ffffff", "#ffffff", "#000000",
+    Scheme("light", N_("Light (default)"), False, "#ffffff", "#ffffff", "#ffffff", "#000000",
            "#707070", "#e5e5e5", "#7a7a7a", "#e5f3ff", "#cce8ff", "#0078d7", "#ffffff",
            "#fff4c4", WIN10_CHART_COLORS),
-    Scheme("dark", "Dunkel", True, "#1c1c1c", "#1c1c1c", "#333333", "#f0f0f0",
+    Scheme("dark", N_("Dark"), True, "#1c1c1c", "#1c1c1c", "#333333", "#f0f0f0",
            "#9a9a9a", "#333333", "#5a5a5a", "#1a3148", "#1f4466", "#3a96dd", "#ffffff",
            "#a0561c", WIN10_DARK_CHART_COLORS),
     Scheme("nord", "Nord", True, "#272c36", "#2e3440", "#3b4252", "#eceff4",

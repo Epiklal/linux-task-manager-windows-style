@@ -3,29 +3,39 @@ set -e
 
 UNIT=wintaskmanager-server.service
 
+case "${LANGUAGE:-${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}}" in
+    de*)
+        MSG_COMPILE="Warnung: Byte-Compile fehlgeschlagen - das Programm läuft trotzdem."
+        MSG_NEEDS_SETUP="Warnung: WinTaskManager ist installiert, startet aber erst nach:"
+        ;;
+    *)
+        MSG_COMPILE="Warning: byte-compiling failed - the program still runs."
+        MSG_NEEDS_SETUP="Warning: WinTaskManager is installed, but only starts after:"
+        ;;
+esac
+
 case "$1" in
     configure)
-        # Byte-compile wie dh_python3 (prerm räumt die .pyc-Dateien wieder weg).
+        # Byte-compile like dh_python3 (prerm removes the .pyc files again).
         if command -v py3compile >/dev/null 2>&1; then
             py3compile -p wintaskmanager /usr/share/wintaskmanager \
-                || echo "Warnung: Byte-Compile fehlgeschlagen - das Programm läuft trotzdem." >&2
+                || echo "$MSG_COMPILE" >&2
         fi
 
-        # PySide6: Systempakete (Debian) oder virtuelle Umgebung per pip (Ubuntu/
-        # Linux Mint haben keine PySide6-Pakete). Schlägt das fehl - z. B. ohne
-        # Internet -, wird trotzdem fertig konfiguriert: ein halb installiertes Paket
-        # würde apt für das ganze System blockieren. Der Starter sagt beim nächsten
-        # Aufruf, was zu tun ist.
+        # PySide6: system packages (Debian) or a virtual environment via pip (Ubuntu/
+        # Linux Mint have no PySide6 packages). If that fails, e.g. without internet,
+        # configuration still finishes: a half-installed package would block apt for
+        # the whole system. The launcher says what to do the next time it runs.
         if ! /usr/libexec/wintaskmanager/setup-venv; then
-            echo "Warnung: WinTaskManager ist installiert, startet aber erst nach:" >&2
+            echo "$MSG_NEEDS_SETUP" >&2
             echo "    sudo /usr/libexec/wintaskmanager/setup-venv" >&2
         fi
 
         if [ -d /run/systemd/system ]; then
             systemctl --system daemon-reload >/dev/null 2>&1 || true
         fi
-        # Der Dienst wird nicht automatisch aktiviert; ein vom Admin aktivierter Dienst
-        # bleibt bei Updates aktiviert und wird neu gestartet.
+        # The service is not enabled automatically; a service the admin enabled stays
+        # enabled across updates and is restarted.
         if command -v deb-systemd-helper >/dev/null 2>&1; then
             if deb-systemd-helper debian-installed "$UNIT"; then
                 deb-systemd-helper unmask "$UNIT" >/dev/null || true

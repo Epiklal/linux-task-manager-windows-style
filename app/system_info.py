@@ -20,6 +20,7 @@ import psutil
 from PySide6.QtCore import QThread, Signal
 
 from app.hardware_setup import helper_path
+from app.i18n import N_
 
 # A leftover nvidia-smi is useless while nouveau drives the card (no NVIDIA module).
 _NVIDIA_SMI = (shutil.which("nvidia-smi")
@@ -31,9 +32,9 @@ _DRM_VRAM_RE = re.compile(r"^drm-memory-vram:\s+(\d+)\s+KiB")
 _DRM_ENGINE_RE = re.compile(r"^drm-engine-([\w-]+):\s+(\d+)\s+ns")
 # amdgpu: gfx/compute/sdma/enc/dec/jpeg; i915 (Intel): render/copy/video/video-enhance.
 _GPU_ENGINE_LABELS = {
-    "gfx": "3D", "render": "3D", "compute": "Compute", "sdma": "Kopieren", "dma": "Kopieren",
-    "copy": "Kopieren", "enc": "Video-Encode", "dec": "Video-Decode", "video": "Video-Decode",
-    "video-enhance": "Video-Verarbeitung", "jpeg": "JPEG",
+    "gfx": "3D", "render": "3D", "compute": "Compute", "sdma": N_("Copy"), "dma": N_("Copy"),
+    "copy": N_("Copy"), "enc": N_("Video Encode"), "dec": N_("Video Decode"),
+    "video": N_("Video Decode"), "video-enhance": N_("Video Processing"), "jpeg": "JPEG",
 }
 
 
@@ -84,8 +85,9 @@ def _nvidia_rate_mb_s(value: str) -> float | None:
     return float(match.group(1)) if match else None
 
 
-GPU_ENGINE_METRICS = ["3D", "Compute", "Kopieren", "Video-Encode", "Video-Decode",
-                      "JPEG", "Speicher-Controller"]
+# These names key the chart history, in the snapshot too: English, translated for display.
+GPU_ENGINE_METRICS = ["3D", "Compute", N_("Copy"), N_("Video Encode"), N_("Video Decode"),
+                      "JPEG", N_("Memory Controller")]
 
 
 class GpuMonitor:
@@ -239,12 +241,12 @@ class GpuMonitor:
 
 
 def _pci_location_text(address: str) -> str:
-    """'0000:2d:00.0' -> 'PCI-Bus 45, Gerät 0, Funktion 0' (as Windows words it)."""
+    """'0000:2d:00.0' -> 'PCI bus 45, device 0, function 0' (as Windows words it)."""
     match = re.search(r"([0-9a-fA-F]+):([0-9a-fA-F]+)\.([0-7])$", address.strip())
     if not match:
         return address
     bus, device, function = (int(part, 16) for part in match.groups())
-    return f"PCI-Bus {bus}, Gerät {device}, Funktion {function}"
+    return f"PCI bus {bus}, device {device}, function {function}"
 
 
 _GPU_VENDORS = {"Advanced Micro Devices": "AMD", "NVIDIA": "NVIDIA", "Intel": "Intel"}
@@ -284,7 +286,7 @@ def _lspci_gpu_name(slot: str) -> str | None:
     return f"{vendor} {model}".strip()
 
 
-RAPL_PERMISSION_HINT = "Keine Leseberechtigung (Einstellungen → Hardwaredaten einrichten)"
+RAPL_PERMISSION_HINT = N_("No read permission (Settings → Set up hardware data)")
 _POWERCAP_BASE = "/sys/class/powercap"
 # Newer Intel CPUs expose the same package counters via MSR, MMIO and TPMI; the
 # MSR interface comes first so a package is not counted twice.
@@ -531,8 +533,8 @@ class GpuSystemMonitor:
                     continue
                 _gpu, sm, mem, enc, dec = parts[:5]
                 return {
-                    "3D": float(sm), "Speicher-Controller": float(mem),
-                    "Video-Encode": float(enc), "Video-Decode": float(dec),
+                    "3D": float(sm), "Memory Controller": float(mem),
+                    "Video Encode": float(enc), "Video Decode": float(dec),
                 }
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError, ValueError):
             pass
@@ -764,8 +766,8 @@ class CpuPowerMonitor:
         if any(counter.permission_denied for counter in self._counters):
             return RAPL_PERMISSION_HINT
         if self.available():
-            return "Wird gemessen …"  # RAPL needs two samples for a rate
-        return "Kein CPU-Leistungssensor vom Kernel bereitgestellt"
+            return N_("Measuring …")  # RAPL needs two samples for a rate
+        return N_("The kernel provides no CPU power sensor")
 
     @staticmethod
     def _find_hwmon_power_paths() -> list[str]:
@@ -807,7 +809,7 @@ def get_cpu_model_name() -> str:
                     return line.split(":", 1)[1].strip()
     except OSError:
         pass
-    return "Unbekannte CPU"
+    return N_("Unknown CPU")
 
 
 def get_cpu_temperature() -> float | None:
@@ -1191,7 +1193,7 @@ def list_hardware_sensors() -> list[dict[str, str | float]]:
             label = _read_sysfs_str(f"{hwmon_path}/{prefix}_label") or prefix
             scaled, unit = _sensor_value(prefix, value)
             sensors.append({
-                "category": "Hardware-Monitor", "name": f"{chip}: {label}",
+                "category": N_("Hardware monitor"), "name": f"{chip}: {label}",
                 "value": scaled, "unit": unit, "source": input_path,
             })
 
@@ -1201,7 +1203,7 @@ def list_hardware_sensors() -> list[dict[str, str | float]]:
             continue
         zone_type = _read_sysfs_str(f"{zone_path}/type") or os.path.basename(zone_path)
         sensors.append({
-            "category": "Thermal-Zone", "name": zone_type,
+            "category": N_("Thermal zone"), "name": zone_type,
             "value": value / 1000, "unit": "°C", "source": f"{zone_path}/temp",
         })
 
@@ -1212,12 +1214,12 @@ def list_hardware_sensors() -> list[dict[str, str | float]]:
         zone = os.path.dirname(energy_path)
         name = _read_sysfs_str(f"{zone}/name") or os.path.basename(zone)
         sensors.append({
-            "category": "Energie", "name": name,
+            "category": N_("Energy"), "name": name,
             "value": value / 1_000_000, "unit": "J", "source": energy_path,
         })
 
     for supply_path in sorted(glob.glob("/sys/class/power_supply/*")):
-        supply_type = _read_sysfs_str(f"{supply_path}/type") or "Stromversorgung"
+        supply_type = _read_sysfs_str(f"{supply_path}/type") or N_("Power supply")
         for filename in ("capacity", "voltage_now", "current_now", "power_now", "temp"):
             path = f"{supply_path}/{filename}"
             value = _read_number(path)
@@ -1423,7 +1425,7 @@ class DockerWorker(StoppableWorker):
 
     def run(self) -> None:
         if not self._docker:
-            self.unavailable.emit("Docker ist nicht installiert oder nicht im PATH.")
+            self.unavailable.emit(N_("Docker is not installed or not in PATH."))
             return
         try:
             while not self._stop_event.is_set():
@@ -1440,7 +1442,7 @@ class DockerWorker(StoppableWorker):
 
     def _collect_rows(self) -> tuple[list[DockerContainerRow], str]:
         if not self._docker:
-            return [], "Docker ist nicht installiert oder nicht im PATH."
+            return [], N_("Docker is not installed or not in PATH.")
         try:
             ps_out = self._run_command(
                 [self._docker, "ps", "-a", "--format", "{{json .}}"],
@@ -1542,7 +1544,7 @@ def docker_container_action(container_id: str, action: str) -> tuple[bool, str]:
     """Run a docker lifecycle action ('start', 'stop', 'restart' or 'rm') on a container."""
     docker = shutil.which("docker")
     if not docker:
-        return False, "Docker ist nicht installiert."
+        return False, N_("Docker is not installed.")
     cmd = [docker, "rm", "-f", container_id] if action == "rm" else [docker, action, container_id]
     try:
         subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=15)
@@ -1565,7 +1567,7 @@ def kill_process(pid: int) -> tuple[bool, str]:
     except psutil.NoSuchProcess:
         return True, ""
     except psutil.AccessDenied:
-        return False, "Zugriff verweigert (Berechtigung erforderlich)"
+        return False, N_("Access denied (permission required)")
     except Exception as exc:  # pragma: no cover - defensive
         return False, str(exc)
 
@@ -1585,7 +1587,7 @@ class AutostartEntry:
     command: str
     comment: str
     enabled: bool
-    source: str  # "Benutzer" or "System"
+    source: str  # "user" or "system", also in the snapshot; the page words it
     path: str
 
 
@@ -1618,13 +1620,13 @@ def list_autostart_entries() -> list[AutostartEntry]:
         try:
             for fn in os.listdir(directory):
                 if fn.endswith(".desktop"):
-                    candidates[fn] = (os.path.join(directory, fn), "System")
+                    candidates[fn] = (os.path.join(directory, fn), "system")
         except OSError:
             continue
     try:
         for fn in os.listdir(_AUTOSTART_USER_DIR):
             if fn.endswith(".desktop"):
-                candidates[fn] = (os.path.join(_AUTOSTART_USER_DIR, fn), "Benutzer")
+                candidates[fn] = (os.path.join(_AUTOSTART_USER_DIR, fn), "user")
     except OSError:
         pass
 
@@ -1657,11 +1659,11 @@ def set_autostart_enabled(entry: AutostartEntry, enabled: bool) -> tuple[bool, s
             or not entry.filename.endswith(".desktop")
             or source_dir not in allowed_dirs):
         # Never edit a file outside the XDG autostart folders, whatever the entry says.
-        return False, "Ungültiger Autostart-Eintrag"
+        return False, N_("Invalid autostart entry")
     try:
         os.makedirs(_AUTOSTART_USER_DIR, exist_ok=True)
         target_path = entry.path
-        if entry.source == "System":
+        if entry.source == "system":
             target_path = os.path.join(_AUTOSTART_USER_DIR, entry.filename)
             if not os.path.exists(target_path):
                 shutil.copyfile(entry.path, target_path)

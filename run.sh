@@ -11,13 +11,13 @@ elif command -v python3 >/dev/null 2>&1; then
 fi
 
 if [[ -z "$PYTHON_BIN" ]]; then
-    echo "Die Anwendung ist noch nicht installiert. Bitte zuerst ./install.sh ausführen." >&2
+    echo "The application is not installed yet. Please run ./install.sh first." >&2
     exit 1
 fi
 
 if [[ "$PYTHON_BIN" == *".venv/bin/python" ]]; then
     if [[ ! -f "$PYTHON_BIN" ]]; then
-        echo "Die virtuelle Umgebung ist beschädigt oder fehlt. Bitte zuerst ./install.sh ausführen." >&2
+        echo "The virtual environment is damaged or missing. Please run ./install.sh first." >&2
         exit 1
     fi
     if ! "$PYTHON_BIN" - <<'PY' >/dev/null 2>&1
@@ -27,7 +27,7 @@ for name in ("PySide6", "psutil"):
         raise SystemExit(1)
 PY
     then
-        echo "Die virtuelle Umgebung ist unvollständig. Bitte zuerst ./install.sh ausführen." >&2
+        echo "The virtual environment is incomplete. Please run ./install.sh first." >&2
         exit 1
     fi
 else
@@ -38,7 +38,7 @@ for name in ("PySide6", "psutil"):
         raise SystemExit(1)
 PY
     then
-        echo "Die Python-Abhängigkeiten fehlen. Bitte zuerst ./install.sh ausführen." >&2
+        echo "The Python dependencies are missing. Please run ./install.sh first." >&2
         exit 1
     fi
 fi

@@ -1,4 +1,4 @@
 #!/bin/sh
-# Starter des Arch-Pakets (PKGBUILD): PySide6 und psutil kommen als Systempakete
-# (pyside6, python-psutil), daher kein venv nötig.
+# Launcher of the Arch package (PKGBUILD): PySide6 and psutil come as system packages
+# (pyside6, python-psutil), so no venv is needed.
 exec /usr/bin/python3 /usr/share/wintaskmanager/main.py "$@"

@@ -9,17 +9,18 @@ Depends: python3 (>= 3.9), python3-venv, python3-psutil, libxcb-cursor0, libxkbc
 Recommends: python3-pyside6.qtcore (>= 6.6), python3-pyside6.qtgui (>= 6.6), python3-pyside6.qtwidgets (>= 6.6), qt6-svg-plugins, libwayland-client0, libwayland-cursor0, libwayland-egl1, smartmontools, dmidecode, lm-sensors, pciutils, sudo, sysbench, fio, glmark2-x11 | glmark2, qt6-wayland
 Suggests: docker.io, nvidia-smi
 Homepage: https://github.com/Epiklal/linux-task-manager-windows-style
-Description: Task-Manager für Linux im Windows-Stil
- Grafischer Task-Manager im Look von Windows 10/11 (Qt 6 / PySide6):
- Prozesse, Leistung (CPU, RAM, Datenträger, Netzwerk, GPU), Autostart,
- Dienste, Benchmarks, Docker-Container und Fernüberwachung anderer Rechner.
+Description: Windows-style task manager for Linux
+ Graphical task manager with the look of Windows 10/11 (Qt 6 / PySide6):
+ processes, performance (CPU, memory, disks, network, GPU), autostart,
+ services, benchmarks, Docker containers and remote monitoring of other
+ machines. The interface is available in German and English.
  .
- Das Paket installiert das Programm nach /usr/share/wintaskmanager, den
- Starter "wintaskmanager", einen Menüeintrag, den Hilfsdienst für SMART-
- und RAM-Daten sowie einen (nicht aktivierten) systemd-Dienst
- "wintaskmanager-server" für den Server-Modus der Fernüberwachung.
+ The package installs the program to /usr/share/wintaskmanager, the
+ "wintaskmanager" launcher, a menu entry, the helper for SMART and
+ memory data and a (disabled) systemd service "wintaskmanager-server"
+ for the remote monitoring server mode.
  .
- PySide6 kommt aus den Systempaketen (Debian). Wo es keine gibt (Ubuntu,
- Linux Mint), legt die Installation eine virtuelle Umgebung unter
- /opt/wintaskmanager/venv an und lädt PySide6 von pypi.org herunter -
- dafür wird einmalig eine Internetverbindung benötigt.
+ PySide6 comes from the system packages (Debian). Where there are none
+ (Ubuntu, Linux Mint), the installation creates a virtual environment in
+ /opt/wintaskmanager/venv and downloads PySide6 from pypi.org - this
+ needs an Internet connection once.

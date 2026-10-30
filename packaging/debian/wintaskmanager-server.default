@@ -1,15 +1,15 @@
-# Einstellungen für den WinTaskManager-Server (systemd-Dienst "wintaskmanager-server").
-# Aktivieren und starten:   sudo systemctl enable --now wintaskmanager-server
-# Nach Änderungen hier:     sudo systemctl restart wintaskmanager-server
+# Settings for the WinTaskManager server (systemd service "wintaskmanager-server").
+# Enable and start:      sudo systemctl enable --now wintaskmanager-server
+# After changes here:    sudo systemctl restart wintaskmanager-server
 #
-# Mögliche Optionen (alle optional):
-#   --token SCHLÜSSEL   fester Zugriffsschlüssel, den die Desktop-App beim Verbinden angibt.
-#                       Ohne --token wird bei jedem Start ein neuer Schlüssel erzeugt und
-#                       ins Journal geschrieben:  journalctl -u wintaskmanager-server
-#   --port 8765         Port (Standard 8765)
-#   --host 0.0.0.0      Adresse, auf der gelauscht wird (Standard: alle)
-#   --no-auth           ohne Zugriffsschlüssel - nur in vertrauenswürdigen Netzen!
+# Available options (all optional):
+#   --token TOKEN       fixed access token that the desktop app enters when connecting.
+#                       Without --token a new token is generated at every start and
+#                       written to the journal:  journalctl -u wintaskmanager-server
+#   --port 8765         port (default 8765)
+#   --host 0.0.0.0      address to listen on (default: all)
+#   --no-auth           no access token - only on trusted networks!
 #
-# Beispiel:
-#WINTASKMANAGER_SERVER_OPTS="--token BITTE-AENDERN --port 8765"
+# Example:
+#WINTASKMANAGER_SERVER_OPTS="--token PLEASE-CHANGE --port 8765"
 WINTASKMANAGER_SERVER_OPTS=""

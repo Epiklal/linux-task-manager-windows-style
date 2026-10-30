@@ -1,11 +1,11 @@
 #!/bin/sh
-# Starter des Debian-Pakets: das Programm liegt in /usr/share/wintaskmanager.
-# Alle Argumente werden durchgereicht, z. B.  wintaskmanager --server --token ...
+# Launcher of the Debian package: the program lives in /usr/share/wintaskmanager.
+# All arguments are passed through, e.g.  wintaskmanager --server --token ...
 #
-# PySide6 kommt entweder aus den Systempaketen (Debian) oder aus der virtuellen
-# Umgebung /opt/wintaskmanager/venv, die setup-venv bei der Installation anlegt
-# (Ubuntu/Linux Mint haben keine PySide6-Pakete). Geprüft wird nur, ob die Module
-# auffindbar sind - das kostet beim Start kaum Zeit.
+# PySide6 comes either from the system packages (Debian) or from the virtual
+# environment /opt/wintaskmanager/venv that setup-venv creates during installation
+# (Ubuntu/Linux Mint have no PySide6 packages). This only checks that the modules
+# can be found, which adds next to nothing to the startup time.
 APP=/usr/share/wintaskmanager/main.py
 VENV=/opt/wintaskmanager/venv
 CHECK='import importlib.util, sys
@@ -17,10 +17,14 @@ for py in "$VENV/bin/python" /usr/bin/python3; do
     fi
 done
 
-message="wintaskmanager: Die Python-Module PySide6/psutil fehlen.
-Bitte einmalig im Terminal ausführen:  sudo /usr/libexec/wintaskmanager/setup-venv"
+case "${LANGUAGE:-${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}}" in
+    de*) message="wintaskmanager: Die Python-Module PySide6/psutil fehlen.
+Bitte einmalig im Terminal ausführen:  sudo /usr/libexec/wintaskmanager/setup-venv" ;;
+    *) message="wintaskmanager: The Python modules PySide6/psutil are missing.
+Please run this once in a terminal:  sudo /usr/libexec/wintaskmanager/setup-venv" ;;
+esac
 echo "$message" >&2
-# Beim Start aus dem Menü sieht niemand stderr: dort gibt es einen Dialog.
+# Nobody sees stderr when started from the menu, so show a dialog there.
 if [ ! -t 2 ] && { [ -n "$DISPLAY" ] || [ -n "$WAYLAND_DISPLAY" ]; }; then
     if command -v zenity >/dev/null 2>&1; then
         zenity --error --title=WinTaskManager --text="$message"

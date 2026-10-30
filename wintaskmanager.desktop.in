@@ -1,16 +1,16 @@
 [Desktop Entry]
 Type=Application
 Version=1.0
-Name=Task-Manager
-Name[en]=Task Manager
-Comment=Linux Task-Manager im Windows-Stil (WinTaskManager)
-Comment[en]=Linux task manager in the style of Windows (WinTaskManager)
+Name=Task Manager
+Name[de]=Task-Manager
+Comment=Linux task manager in the style of Windows (WinTaskManager)
+Comment[de]=Linux Task-Manager im Windows-Stil (WinTaskManager)
 Exec="@APP_DIR@/run.sh"
 Icon=utilities-system-monitor
 Terminal=false
 Categories=System;Monitor;
 StartupNotify=true
-GenericName=Systemüberwachung
-GenericName[en]=System Monitor
-Keywords=WinTaskManager;Taskmanager;Task Manager;Taskmgr;CPU;RAM;Prozesse;Leistung;System;Monitor;
-Keywords[en]=WinTaskManager;Taskmanager;Task Manager;Taskmgr;CPU;RAM;Processes;Performance;System;Monitor;
+GenericName=System Monitor
+GenericName[de]=Systemüberwachung
+Keywords=WinTaskManager;Taskmanager;Task Manager;Taskmgr;CPU;RAM;Processes;Performance;System;Monitor;
+Keywords[de]=WinTaskManager;Taskmanager;Task Manager;Taskmgr;CPU;RAM;Prozesse;Leistung;System;Monitor;

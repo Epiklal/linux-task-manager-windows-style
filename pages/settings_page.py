@@ -25,16 +25,17 @@ from PySide6.QtWidgets import (
 )
 
 from app.hardware_setup import setup_script, terminal_command
+from app.i18n import N_, tr
 from app.settings import Settings
 from app.themes import SCHEMES
 
 QSS_TEMPLATES = {
-    "Gesamte App": """QWidget {
+    N_("Whole app"): """QWidget {
     background-color: #191919;
     color: #f1f1f1;
     font-size: 13px;
 }""",
-    "Tab-Leiste": """QTabBar::tab {
+    N_("Tab bar"): """QTabBar::tab {
     background-color: #191919;
     color: #c9c9c9;
     padding: 9px 16px;
@@ -43,7 +44,7 @@ QTabBar::tab:selected {
     color: #ffffff;
     border-bottom: 2px solid #00b7c3;
 }""",
-    "Schaltflächen": """QPushButton {
+    N_("Buttons"): """QPushButton {
     background-color: #242424;
     color: #f1f1f1;
     border: 1px solid #393939;
@@ -54,7 +55,7 @@ QPushButton:hover {
     background-color: #313131;
     border-color: #00b7c3;
 }""",
-    "Tabellen": """QTableView, QTableWidget {
+    N_("Tables"): """QTableView, QTableWidget {
     background-color: #1e1e1e;
     color: #f1f1f1;
     gridline-color: #303030;
@@ -64,7 +65,7 @@ QHeaderView::section {
     background-color: #242424;
     color: #e6e6e6;
 }""",
-    "Leistungs-Kacheln": """QWidget#resourceTile {
+    N_("Performance tiles"): """QWidget#resourceTile {
     background-color: #191919;
     border-left: 3px solid transparent;
 }
@@ -72,7 +73,7 @@ QWidget#resourceTile[selected=\"true\"] {
     background-color: #292929;
     border-left-color: #00b7c3;
 }""",
-    "Leistungs-Diagramme": """LiveChart {
+    N_("Performance charts"): """LiveChart {
     qproperty-lineColor: #00b7c3;
     qproperty-backgroundColor: #191919;
     qproperty-gridColor: #303030;
@@ -83,6 +84,7 @@ QWidget#resourceTile[selected=\"true\"] {
 class SettingsPage(QWidget):
     themeChanged = Signal(str)
     styleChanged = Signal(str)
+    languageChanged = Signal(str)
     processIntervalChanged = Signal(int)  # milliseconds
     performanceIntervalChanged = Signal(int)  # milliseconds
     smartSudoEnabled = Signal(bool)
@@ -93,10 +95,10 @@ class SettingsPage(QWidget):
         super().__init__(parent)
         self.settings = settings
 
-        appearance_box = QGroupBox("Darstellung")
+        appearance_box = QGroupBox(tr("Appearance"))
         self.theme_combo = QComboBox()
         for key, scheme in SCHEMES.items():
-            self.theme_combo.addItem(scheme.name, key)
+            self.theme_combo.addItem(tr(scheme.name), key)
         self.theme_combo.setCurrentIndex(self.theme_combo.findData(settings.theme))
         self.theme_combo.currentIndexChanged.connect(self._on_theme_changed)
 
@@ -106,11 +108,20 @@ class SettingsPage(QWidget):
         self.style_combo.setCurrentIndex(self.style_combo.findData(settings.style))
         self.style_combo.currentIndexChanged.connect(self._on_style_changed)
 
-        appearance_form = QFormLayout(appearance_box)
-        appearance_form.addRow("Design:", self.style_combo)
-        appearance_form.addRow("Farbschema:", self.theme_combo)
+        self.language_combo = QComboBox()
+        self.language_combo.addItem(tr("System default"), "system")
+        # Each language keeps its own name, so it can be found from the other one.
+        self.language_combo.addItem("Deutsch", "de")
+        self.language_combo.addItem("English", "en")
+        self.language_combo.setCurrentIndex(self.language_combo.findData(settings.language))
+        self.language_combo.currentIndexChanged.connect(self._on_language_changed)
 
-        speed_box = QGroupBox("Aktualisierungsgeschwindigkeit")
+        appearance_form = QFormLayout(appearance_box)
+        appearance_form.addRow(tr("Language:"), self.language_combo)
+        appearance_form.addRow(tr("Style:"), self.style_combo)
+        appearance_form.addRow(tr("Color scheme:"), self.theme_combo)
+
+        speed_box = QGroupBox(tr("Refresh rate"))
         self.process_spin = QSpinBox()
         self.process_spin.setRange(200, 5000)
         self.process_spin.setSingleStep(100)
@@ -126,31 +137,31 @@ class SettingsPage(QWidget):
         self.performance_spin.valueChanged.connect(self._on_performance_interval_changed)
 
         speed_form = QFormLayout(speed_box)
-        speed_form.addRow("Prozessliste:", self.process_spin)
-        speed_form.addRow("Leistungsdiagramme:", self.performance_spin)
+        speed_form.addRow(tr("Process list:"), self.process_spin)
+        speed_form.addRow(tr("Performance charts:"), self.performance_spin)
 
-        remote_box = QGroupBox("Remote-Server")
-        self.remote_enabled_check = QCheckBox("Daten vom Server verwenden")
+        remote_box = QGroupBox(tr("Remote server"))
+        self.remote_enabled_check = QCheckBox(tr("Use data from the server"))
         self.remote_enabled_check.setChecked(settings.remote_enabled)
         self.remote_host_edit = QLineEdit(settings.remote_host)
-        self.remote_host_edit.setPlaceholderText("127.0.0.1 oder Server-IP")
+        self.remote_host_edit.setPlaceholderText(tr("127.0.0.1 or server IP"))
         self.remote_port_spin = QSpinBox()
         self.remote_port_spin.setRange(1, 65535)
         self.remote_port_spin.setValue(settings.remote_port)
         self.remote_token_edit = QLineEdit(settings.remote_token)
-        self.remote_token_edit.setPlaceholderText("Optionaler Zugriffsschlüssel")
+        self.remote_token_edit.setPlaceholderText(tr("Optional access token"))
         self.remote_token_edit.setEchoMode(QLineEdit.Password)
-        self.remote_connect_button = QPushButton("Serververbindung anwenden")
+        self.remote_connect_button = QPushButton(tr("Apply server connection"))
         self.remote_connect_button.clicked.connect(self._apply_remote_connection)
         remote_form = QFormLayout(remote_box)
         remote_form.addRow(self.remote_enabled_check)
-        remote_form.addRow("Server-IP:", self.remote_host_edit)
+        remote_form.addRow(tr("Server IP:"), self.remote_host_edit)
         remote_form.addRow("Port:", self.remote_port_spin)
-        remote_form.addRow("Zugriffsschlüssel:", self.remote_token_edit)
+        remote_form.addRow(tr("Access token:"), self.remote_token_edit)
         remote_form.addRow(self.remote_connect_button)
 
-        smart_box = QGroupBox("Hardwaredaten (SMART, Arbeitsspeicher, CPU-Leistung)")
-        self.smart_setup_button = QPushButton("Hardwaredaten mit sudo einrichten")
+        smart_box = QGroupBox(tr("Hardware data (SMART, memory, CPU power)"))
+        self.smart_setup_button = QPushButton(tr("Set up hardware data with sudo"))
         self.smart_setup_button.clicked.connect(self._setup_smart_access)
         self.smart_status = QLabel(self._smart_status_text())
         self.smart_status.setWordWrap(True)
@@ -158,7 +169,7 @@ class SettingsPage(QWidget):
         smart_form.addRow(self.smart_setup_button)
         smart_form.addRow(self.smart_status)
 
-        custom_qss_box = QGroupBox("Eigener Stil (QSS)")
+        custom_qss_box = QGroupBox(tr("Custom style (QSS)"))
         self.custom_qss_edit = QPlainTextEdit(settings.custom_qss)
         self.custom_qss_edit.setPlaceholderText(
             "QWidget { background-color: #191919; }\n"
@@ -166,16 +177,17 @@ class SettingsPage(QWidget):
         )
         self.custom_qss_edit.setMinimumHeight(190)
         self.qss_template_combo = QComboBox()
-        self.qss_template_combo.addItem("Vorlage auswählen")
-        self.qss_template_combo.addItems(QSS_TEMPLATES)
-        self.insert_qss_template_button = QPushButton("Vorlage einfügen")
+        self.qss_template_combo.addItem(tr("Choose template"))
+        for name in QSS_TEMPLATES:
+            self.qss_template_combo.addItem(tr(name), name)
+        self.insert_qss_template_button = QPushButton(tr("Insert template"))
         self.insert_qss_template_button.clicked.connect(self._insert_qss_template)
         custom_qss_template_row = QHBoxLayout()
         custom_qss_template_row.addWidget(self.qss_template_combo, stretch=1)
         custom_qss_template_row.addWidget(self.insert_qss_template_button)
-        self.apply_custom_qss_button = QPushButton("Stil anwenden")
+        self.apply_custom_qss_button = QPushButton(tr("Apply style"))
         self.apply_custom_qss_button.clicked.connect(self._apply_custom_qss)
-        self.reset_custom_qss_button = QPushButton("Stil zurücksetzen")
+        self.reset_custom_qss_button = QPushButton(tr("Reset style"))
         self.reset_custom_qss_button.clicked.connect(self._reset_custom_qss)
         custom_qss_actions = QHBoxLayout()
         custom_qss_actions.addWidget(self.apply_custom_qss_button)
@@ -185,9 +197,7 @@ class SettingsPage(QWidget):
         custom_qss_layout.addWidget(self.custom_qss_edit)
         custom_qss_layout.addLayout(custom_qss_actions)
 
-        hint = QLabel(
-            "Kleinere Werte aktualisieren schneller, benötigen aber etwas mehr CPU."
-        )
+        hint = QLabel(tr("Smaller values refresh faster but use a little more CPU."))
         hint.setWordWrap(True)
 
         layout = QVBoxLayout(self)
@@ -208,6 +218,11 @@ class SettingsPage(QWidget):
         style = self.style_combo.itemData(index)
         self.settings.style = style
         self.styleChanged.emit(style)
+
+    def _on_language_changed(self, index: int) -> None:
+        language = self.language_combo.itemData(index)
+        self.settings.language = language
+        self.languageChanged.emit(language)
 
     def _on_process_interval_changed(self, value: int) -> None:
         self.settings.process_interval_ms = value
@@ -235,7 +250,7 @@ class SettingsPage(QWidget):
         self.customQssChanged.emit(qss)
 
     def _insert_qss_template(self) -> None:
-        template = QSS_TEMPLATES.get(self.qss_template_combo.currentText())
+        template = QSS_TEMPLATES.get(self.qss_template_combo.currentData())
         if not template:
             return
         editor = self.custom_qss_edit
@@ -249,13 +264,12 @@ class SettingsPage(QWidget):
 
     def _smart_status_text(self) -> str:
         if self.settings.smart_sudo_enabled:
-            return "SMART wird mit sudo abgefragt. Die Freigabe läuft nach einigen Minuten ab."
-        return "Für Temperatur, Startvorgänge und Gesamtdaten benötigt SMART meist sudo."
+            return tr("SMART is queried with sudo. The authorization expires after a few minutes.")
+        return tr("SMART usually needs sudo for temperature, start counts and totals.")
 
     def _setup_smart_access(self) -> None:
         if not shutil.which("sudo"):
-            self.smart_status.setText(
-                "sudo ist nicht installiert - die Einrichtung benötigt sudo.")
+            self.smart_status.setText(tr("sudo is not installed - the setup needs sudo."))
             return
         helper_source = Path(__file__).resolve().parents[1] / "scripts" / "wintaskmanager-smartctl"
         group = grp.getgrgid(os.getgid()).gr_name
@@ -264,15 +278,14 @@ class SettingsPage(QWidget):
         if command is None or not QProcess.startDetached(command[0], command[1:]):
             # No known terminal emulator: show the commands so they can be run by hand.
             box = QMessageBox(self)
-            box.setWindowTitle("Hardwaredaten einrichten")
-            box.setText("Kein Terminal gefunden. Bitte diese Befehle in einem Terminal "
-                        "ausführen:")
+            box.setWindowTitle(tr("Set up hardware data"))
+            box.setText(tr("No terminal found. Please run these commands in a terminal:"))
             box.setDetailedText(script)
             box.exec()
-            self.smart_status.setText("Terminal konnte nicht gestartet werden.")
+            self.smart_status.setText(tr("The terminal could not be started."))
             return
-        self.smart_status.setText(
-            "Im Terminal Passwort eingeben und den Abschluss abwarten. "
-            "Danach den Button bei Bedarf erneut drücken, um sudo zu erneuern."
-        )
+        self.smart_status.setText(tr(
+            "Enter your password in the terminal and wait for it to finish. "
+            "Press the button again later if sudo needs renewing."
+        ))
         self.smartSudoEnabled.emit(True)

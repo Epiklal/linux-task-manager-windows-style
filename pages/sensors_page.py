@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.i18n import format_decimal, tr
 from app.system_info import list_hardware_sensors
 
 
@@ -21,7 +22,7 @@ class SensorsPage(QWidget):
 
         self.summary = QLabel("")
         self.summary.setObjectName("detailInfo")
-        refresh_button = QPushButton("Aktualisieren")
+        refresh_button = QPushButton(tr("Refresh"))
         refresh_button.clicked.connect(self.refresh)
         top = QHBoxLayout()
         top.addWidget(self.summary)
@@ -30,7 +31,7 @@ class SensorsPage(QWidget):
 
         self.table = QTableWidget(0, 5)
         self.table.setHorizontalHeaderLabels(
-            ["Kategorie", "Sensor", "Wert", "Einheit", "Quelle"]
+            [tr("Category"), tr("Sensor"), tr("Value"), tr("Unit"), tr("Source")]
         )
         self.table.setAlternatingRowColors(True)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -59,9 +60,9 @@ class SensorsPage(QWidget):
         self.table.setRowCount(len(sensors))
         for row, sensor in enumerate(sensors):
             values = (
-                str(sensor["category"]),
+                tr(str(sensor["category"])),
                 str(sensor["name"]),
-                f"{sensor['value']:.2f}",
+                format_decimal(sensor['value'], 2),
                 str(sensor["unit"]),
                 str(sensor["source"]),
             )
@@ -71,7 +72,7 @@ class SensorsPage(QWidget):
                     item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 self.table.setItem(row, column, item)
         self.table.setSortingEnabled(True)
-        self.summary.setText(f"{len(sensors)} lesbare Sensoren")
+        self.summary.setText(tr("{count} readable sensors", count=len(sensors)))
 
     def set_remote_sensors(self, sensors: list[dict] | None) -> None:
         self._remote_sensors = sensors

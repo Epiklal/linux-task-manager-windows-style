@@ -12,11 +12,11 @@ case "$1" in
         if command -v deb-systemd-helper >/dev/null 2>&1; then
             deb-systemd-helper mask "$UNIT" >/dev/null || true
         fi
-        # Reste, falls ohne py3clean deinstalliert wurde.
+        # Leftovers in case the package was removed without py3clean.
         find /usr/share/wintaskmanager -depth -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
         rmdir -p /usr/share/wintaskmanager/app /usr/share/wintaskmanager/pages \
                  /usr/share/wintaskmanager/widgets 2>/dev/null || true
-        # Die von setup-venv angelegte virtuelle Umgebung (wird bei Bedarf neu erzeugt).
+        # The virtual environment created by setup-venv (recreated when needed).
         rm -rf /opt/wintaskmanager
         ;;
     purge)
@@ -24,8 +24,8 @@ case "$1" in
             deb-systemd-helper purge "$UNIT" >/dev/null || true
             deb-systemd-helper unmask "$UNIT" >/dev/null || true
         fi
-        # Nur die sudo-Regel, die auf den paketierten Helfer zeigt; eine Regel für das
-        # Git-Checkout (/usr/local) gehört dem Benutzer.
+        # Only the sudo rule pointing at the packaged helper; a rule for the Git
+        # checkout (/usr/local) belongs to the user.
         if [ -f /etc/sudoers.d/wintaskmanager-smartctl ] \
             && grep -q '/usr/libexec/wintaskmanager/' /etc/sudoers.d/wintaskmanager-smartctl; then
             rm -f /etc/sudoers.d/wintaskmanager-smartctl

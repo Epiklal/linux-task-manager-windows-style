@@ -1,6 +1,6 @@
-# Baut das Debian-Paket und hängt es bei einem Tag "v*" an ein GitHub-Release.
-# Jeder Push auf main und jeder manuelle Start bauen und testen ebenfalls,
-# legen das Paket aber nur als Workflow-Artefakt ab.
+# Builds the Debian package and attaches it to a GitHub release for a "v*" tag.
+# Every push to main and every manual start also build and test, but only keep
+# the package as a workflow artifact.
 name: Build .deb
 
 on:
@@ -37,8 +37,8 @@ jobs:
           ls -l dist/
           dpkg-deb --info dist/*.deb
 
-      # ubuntu-latest hat wie Linux Mint keine PySide6-Systempakete: hier wird der
-      # Weg über /opt/wintaskmanager/venv (Download von PyPI) mitgetestet.
+      # Like Linux Mint, ubuntu-latest has no PySide6 system packages: this also
+      # tests the route through /opt/wintaskmanager/venv (download from PyPI).
       - name: Install package (smoke test)
         run: |
           sudo apt-get install -y ./dist/*.deb
@@ -54,8 +54,8 @@ jobs:
           timeout -s KILL 20 wintaskmanager
           rc=$?
           set -e
-          # 137 = nach 20 s noch gelaufen (von timeout beendet), alles andere = Absturz
-          test "$rc" -eq 137 || { echo "wintaskmanager beendete sich mit Code $rc"; exit 1; }
+          # 137 = still running after 20 s (ended by timeout), anything else = crash
+          test "$rc" -eq 137 || { echo "wintaskmanager exited with code $rc"; exit 1; }
 
       - name: Run unit tests
         env:

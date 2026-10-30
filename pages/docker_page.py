@@ -20,19 +20,20 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.i18n import N_, tr
 from app.settings import Settings
 from app.system_info import DockerContainerRow, DockerWorker, docker_container_action
 from widgets.resizable_table import ResizableRowsTableView
 
-COLUMNS = ["★", "Name", "Image", "Status", "CPU %", "Speicher (MB)", "Limit (MB)",
-           "Speicher %", "GPU %", "VRAM (MB)"]
+COLUMNS = ["★", N_("Name"), N_("Image"), N_("Status"), N_("CPU %"), N_("Memory (MB)"), N_("Limit (MB)"),
+           N_("Memory %"), N_("GPU %"), N_("VRAM (MB)")]
 _DEFAULT_COLUMN_WIDTHS = [28, 200, 160, 110, 70, 110, 90, 80, 70, 100]
 # Same Win10-style heat-map highlighting used on the Processes tab.
 _HEATMAP_COLUMNS = {4: 100.0, 5: 4096.0, 7: 100.0, 8: 100.0, 9: 4096.0}
-_IMAGE_FILTER = "Bilder (*.png *.jpg *.jpeg *.bmp *.svg *.ico);;Alle Dateien (*)"
+_IMAGE_FILTER = N_("Images (*.png *.jpg *.jpeg *.bmp *.svg *.ico);;All files (*)")
 
 
-_REMOTE_ACTION_HINT = "Im Remote-Modus zeigt diese Liste Daten des Servers. Aktionen würden auf diesem PC ausgeführt und sind deshalb gesperrt."
+_REMOTE_ACTION_HINT = N_("In remote mode this list shows the server's data. Actions would run on this PC and are therefore locked.")
 
 class DockerTableModel(QAbstractTableModel):
     def __init__(self, parent=None):
@@ -48,7 +49,7 @@ class DockerTableModel(QAbstractTableModel):
 
     def headerData(self, section, orientation, role=Qt.DisplayRole):
         if role == Qt.DisplayRole and orientation == Qt.Horizontal:
-            return COLUMNS[section]
+            return tr(COLUMNS[section])
         return None
 
     def data(self, index: QModelIndex, role=Qt.DisplayRole):
@@ -135,17 +136,17 @@ class DockerPage(QWidget):
         self.proxy.setFilterCaseSensitivity(Qt.CaseInsensitive)
 
         self.search_box = QLineEdit()
-        self.search_box.setPlaceholderText("Container suchen...")
+        self.search_box.setPlaceholderText(tr("Search containers..."))
         self.search_box.textChanged.connect(self.proxy.setFilterFixedString)
 
-        self.favorite_btn = QPushButton("★ Favorit")
+        self.favorite_btn = QPushButton(tr("★ Favorite"))
         self.favorite_btn.setCheckable(True)
-        self.icon_btn = QPushButton("Bild wählen...")
-        self.rename_btn = QPushButton("Umbenennen...")
-        self.start_btn = QPushButton("Starten")
-        self.stop_btn = QPushButton("Stoppen")
-        self.restart_btn = QPushButton("Neustart")
-        self.remove_btn = QPushButton("Entfernen")
+        self.icon_btn = QPushButton(tr("Choose image..."))
+        self.rename_btn = QPushButton(tr("Rename..."))
+        self.start_btn = QPushButton(tr("Start"))
+        self.stop_btn = QPushButton(tr("Stop"))
+        self.restart_btn = QPushButton(tr("Restart"))
+        self.remove_btn = QPushButton(tr("Remove"))
         for btn in (self.favorite_btn, self.icon_btn, self.rename_btn,
                     self.start_btn, self.stop_btn, self.restart_btn, self.remove_btn):
             btn.setEnabled(False)
@@ -233,7 +234,7 @@ class DockerPage(QWidget):
 
     def _on_unavailable(self, message: str) -> None:
         self.model.set_rows([])
-        self.info_label.setText(f"Docker nicht verfügbar: {message}")
+        self.info_label.setText(tr("Docker not available: {message}", message=tr(message)))
         self.info_label.setVisible(True)
 
     def _selected_id(self) -> str | None:
@@ -273,7 +274,7 @@ class DockerPage(QWidget):
         self.start_btn.setEnabled(bool(container) and not container.running and not remote)
         self.stop_btn.setEnabled(bool(container) and container.running and not remote)
         for btn in (self.restart_btn, self.remove_btn, self.start_btn, self.stop_btn):
-            btn.setToolTip(_REMOTE_ACTION_HINT if remote else "")
+            btn.setToolTip(tr(_REMOTE_ACTION_HINT) if remote else "")
         self.favorite_btn.blockSignals(True)
         self.favorite_btn.setChecked(
             bool(self._meta.get(container.name, {}).get("favorite")) if container else False
@@ -302,7 +303,7 @@ class DockerPage(QWidget):
         container = self._selected_container()
         if container is None:
             return
-        path, _ = QFileDialog.getOpenFileName(self, "Bild für Container wählen", "", _IMAGE_FILTER)
+        path, _ = QFileDialog.getOpenFileName(self, tr("Choose image for container"), "", tr(_IMAGE_FILTER))
         if not path:
             return
         self._meta_for(container.name)["icon_path"] = path
@@ -314,8 +315,8 @@ class DockerPage(QWidget):
             return
         current = self._meta.get(container.name, {}).get("custom_name", "")
         new_name, ok = QInputDialog.getText(
-            self, "Container umbenennen",
-            "Anzeigename (nur in dieser App sichtbar):", text=current or container.name,
+            self, tr("Rename container"),
+            tr("Display name (only visible in this app):"), text=current or container.name,
         )
         if not ok:
             return
@@ -332,14 +333,14 @@ class DockerPage(QWidget):
             return
         if action == "rm":
             confirm = QMessageBox.question(
-                self, "Container entfernen",
-                f"Möchtest du den Container \"{container.name}\" wirklich entfernen?",
+                self, tr("Remove container"),
+                tr("Do you really want to remove the container \"{name}\"?", name=container.name),
             )
             if confirm != QMessageBox.Yes:
                 return
         ok, error = docker_container_action(container.id, action)
         if not ok:
-            QMessageBox.warning(self, "Fehler", f"Aktion fehlgeschlagen:\n{error}")
+            QMessageBox.warning(self, tr("Error"), tr("Action failed:\n{error}", error=tr(error)))
 
     def shutdown(self) -> None:
         if self.worker is not None:

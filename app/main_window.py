@@ -6,18 +6,21 @@ import re
 from pathlib import Path
 from string import Template
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QActionGroup
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMenuBar,
     QPushButton,
+    QStatusBar,
     QVBoxLayout,
     QWidget,
 )
 
+from app.i18n import set_language, tr
 from app.settings import Settings
 from pages.autostart_page import AutostartPage
 from pages.benchmarks_page import BenchmarksPage
@@ -683,10 +686,17 @@ class MainWindow(QMainWindow):
     def __init__(self):
         QApplication.setStyle("Fusion")
         super().__init__()
-        self.setWindowTitle("Task-Manager")
         self.resize(1000, 700)
 
         self.settings = Settings()
+        self._always_on_top = False
+        set_language(self.settings.language)
+
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        """Creates everything that shows text; runs again when the language changes."""
+        self.setWindowTitle(tr("Task Manager"))
 
         self.tabs = NavTabWidget()
 
@@ -700,20 +710,20 @@ class MainWindow(QMainWindow):
         self.settings_page = SettingsPage(self.settings)
 
         # Windows 11 shows these commands in the page header instead of menu/footer.
-        processes_new_task = QPushButton("Neuen Task ausführen")
+        processes_new_task = QPushButton(tr("Run new task"))
         processes_new_task.clicked.connect(self.processes_page.run_new_task)
-        performance_new_task = QPushButton("Neuen Task ausführen")
+        performance_new_task = QPushButton(tr("Run new task"))
         performance_new_task.clicked.connect(self.processes_page.run_new_task)
         pages = [
-            (self.processes_page, "Prozesse",
+            (self.processes_page, tr("Processes"),
              [processes_new_task, self.processes_page.header_end_task_btn]),
-            (self.performance_page, "Leistung", [performance_new_task]),
-            (self.sensors_page, "Sensoren", None),
-            (self.services_page, "Dienste", None),
+            (self.performance_page, tr("Performance"), [performance_new_task]),
+            (self.sensors_page, tr("Sensors"), None),
+            (self.services_page, tr("Services"), None),
             (self.docker_page, "Docker", None),
-            (self.autostart_page, "Autostart", None),
-            (self.benchmarks_page, "Benchmarks", None),
-            (self.settings_page, "Einstellungen", None),
+            (self.autostart_page, tr("Autostart"), None),
+            (self.benchmarks_page, tr("Benchmarks"), None),
+            (self.settings_page, tr("Settings"), None),
         ]
         self.page_frames: list[PageFrame] = []
         for page, title, actions in pages:
@@ -727,7 +737,7 @@ class MainWindow(QMainWindow):
         self.status_label = QLabel()
         self.statusBar().setSizeGripEnabled(False)
         self.statusBar().addWidget(self.status_label, stretch=1)
-        # Windows 10 keeps "Task beenden" in the footer, bottom right.
+        # Windows 10 keeps "End task" in the footer, bottom right.
         self.statusBar().addPermanentWidget(self.processes_page.end_task_btn)
         self.statusBar().setContentsMargins(8, 4, 10, 6)
         self.processes_page.statsChanged.connect(self._update_status)
@@ -737,6 +747,7 @@ class MainWindow(QMainWindow):
         self.settings_page.themeChanged.connect(self.apply_theme)
         self.settings_page.themeChanged.connect(self._sync_theme_actions)
         self.settings_page.styleChanged.connect(self._on_style_changed)
+        self.settings_page.languageChanged.connect(self._on_language_changed)
         self.settings_page.processIntervalChanged.connect(
             lambda ms: self.processes_page.set_refresh_interval(ms / 1000)
         )
@@ -770,35 +781,50 @@ class MainWindow(QMainWindow):
             )
         self.apply_theme(self.settings.theme)
 
+    def _on_language_changed(self, language: str) -> None:
+        # Deferred: the signal comes from a combo box inside the page being replaced.
+        QTimer.singleShot(0, lambda: self._switch_language(language))
+
+    def _switch_language(self, language: str) -> None:
+        """Rebuilds all pages, menus and the status bar in the new language."""
+        set_language(language)
+        self.tabs.currentChanged.disconnect(self._on_tab_changed)
+        self._shut_down_pages()
+        self.setMenuBar(QMenuBar())
+        self.setStatusBar(QStatusBar())
+        self._build_ui()
+        self.tabs.setCurrentWidget(self.page_frames[-1])
+
     def _build_menu(self) -> None:
-        """Datei / Optionen / Ansicht, like the Windows 10 Task Manager."""
+        """File / Options / View, like the Windows 10 Task Manager."""
         menu_bar = self.menuBar()
 
-        file_menu = menu_bar.addMenu("&Datei")
-        file_menu.addAction("&Neuen Task ausführen", self.processes_page.run_new_task)
-        file_menu.addAction("Datei &starten…", self.processes_page.choose_and_start_file)
+        file_menu = menu_bar.addMenu(tr("&File"))
+        file_menu.addAction(tr("&Run new task"), self.processes_page.run_new_task)
+        file_menu.addAction(tr("&Start file…"), self.processes_page.choose_and_start_file)
         file_menu.addSeparator()
-        file_menu.addAction("&Beenden", self.close)
+        file_menu.addAction(tr("E&xit"), self.close)
 
-        options_menu = menu_bar.addMenu("&Optionen")
-        on_top = options_menu.addAction("&Immer im Vordergrund")
+        options_menu = menu_bar.addMenu(tr("&Options"))
+        on_top = options_menu.addAction(tr("&Always on top"))
         on_top.setCheckable(True)
+        on_top.setChecked(self._always_on_top)
         on_top.toggled.connect(self._set_always_on_top)
 
-        view_menu = menu_bar.addMenu("&Ansicht")
-        style_menu = view_menu.addMenu("&Design")
-        style_group = QActionGroup(self)
+        view_menu = menu_bar.addMenu(tr("&View"))
+        style_menu = view_menu.addMenu(tr("&Style"))
+        style_group = QActionGroup(style_menu)
         for key, label in (("win10", "Windows &10"), ("win11", "Windows &11")):
             action = style_menu.addAction(label)
             action.setCheckable(True)
             action.setChecked(self.settings.style == key)
             action.triggered.connect(lambda _checked=False, k=key: self._choose_style(k))
             style_group.addAction(action)
-        theme_menu = view_menu.addMenu("&Farbschema")
+        theme_menu = view_menu.addMenu(tr("&Color scheme"))
         self._theme_actions: dict[str, QAction] = {}
-        group = QActionGroup(self)
+        group = QActionGroup(theme_menu)
         for key, scheme in SCHEMES.items():
-            action = theme_menu.addAction(scheme.name)
+            action = theme_menu.addAction(tr(scheme.name))
             action.setCheckable(True)
             action.setChecked(self.settings.theme == key)
             action.triggered.connect(lambda _checked=False, k=key: self._choose_theme(k))
@@ -822,6 +848,7 @@ class MainWindow(QMainWindow):
             action.setChecked(True)
 
     def _set_always_on_top(self, enabled: bool) -> None:
+        self._always_on_top = enabled
         self.setWindowFlag(Qt.WindowStaysOnTopHint, enabled)
         self.show()
 
@@ -867,10 +894,15 @@ class MainWindow(QMainWindow):
 
     def _update_status(self, process_count: int, thread_count: int) -> None:
         self.status_label.setText(
-            f"Prozesse: {process_count}     Threads: {thread_count}"
+            tr("Processes: {processes}     Threads: {threads}",
+               processes=process_count, threads=thread_count)
         )
 
     def closeEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        self._shut_down_pages()
+        super().closeEvent(event)
+
+    def _shut_down_pages(self) -> None:
         self.processes_page.shutdown()
         self.performance_page.shutdown()
         self.sensors_page.shutdown()
@@ -878,4 +910,3 @@ class MainWindow(QMainWindow):
         self.docker_page.shutdown()
         self.autostart_page.shutdown()
         self.benchmarks_page.shutdown()
-        super().closeEvent(event)

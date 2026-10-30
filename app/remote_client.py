@@ -12,15 +12,17 @@ import urllib.request
 
 from PySide6.QtCore import QThread, Signal
 
+from app.i18n import current_language, tr
+
 
 def _http_error_text(error: urllib.error.HTTPError) -> str:
     """Readable message for an error answer of the monitoring server."""
     if error.code == 401:
-        return "Zugriffsschlüssel fehlt oder ist falsch"
+        return tr("Access token is missing or wrong")
     try:
-        return json.loads(error.read().decode("utf-8"))["error"]
+        return tr(json.loads(error.read().decode("utf-8"))["error"])
     except (OSError, ValueError, KeyError, TypeError):
-        return f"HTTP-Fehler {error.code}"
+        return tr("HTTP error {code}", code=error.code)
 
 
 class RemoteSnapshotWorker(QThread):
@@ -71,6 +73,8 @@ class RemoteBenchmarkWorker(QThread):
         self.options = {
             "cpu_threads": cpu_threads, "cpu_seconds": cpu_seconds,
             "cpu_max_prime": cpu_max_prime, "disk_directory": disk_directory,
+            # The server words its result in this language.
+            "language": current_language(),
         }
         self._stop_event = threading.Event()
         self._conn_lock = threading.Lock()
@@ -114,22 +118,23 @@ class RemoteBenchmarkWorker(QThread):
             conn.close()
 
     def run(self) -> None:
-        labels = {"cpu": "CPU", "memory": "Arbeitsspeicher", "gpu": "GPU", "disk": "Datenträger"}
+        labels = {"cpu": tr("CPU"), "memory": tr("Memory"), "gpu": tr("GPU"), "disk": tr("Disk")}
         try:
             for kind in self.benchmarks:
                 if self._stop_event.is_set():
                     return
-                self.resultReady.emit(labels[kind], "Läuft", "Server-Benchmark")
+                self.resultReady.emit(labels[kind], tr("Running"), tr("Server benchmark"))
                 result = self._post(json.dumps({"kind": kind, **self.options}).encode())
                 if self._stop_event.is_set():
                     return
-                self.resultReady.emit(result["label"], result["result"], result["details"])
+                # Our own label, not the server's: it has to match the "Running" row.
+                self.resultReady.emit(labels[kind], result["result"], result["details"])
         except urllib.error.HTTPError as error:
             if self._stop_event.is_set():
                 return
-            self.resultReady.emit("Server", "Fehlgeschlagen", _http_error_text(error))
+            self.resultReady.emit(tr("Server"), tr("Failed"), _http_error_text(error))
         except (OSError, http.client.HTTPException, ValueError, KeyError) as error:
             if self._stop_event.is_set():
                 return
-            self.resultReady.emit("Server", "Fehlgeschlagen", str(error))
+            self.resultReady.emit(tr("Server"), tr("Failed"), str(error))
         self.finished.emit()

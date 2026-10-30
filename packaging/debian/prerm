@@ -11,7 +11,7 @@ if [ "$1" = "remove" ] && [ -d /run/systemd/system ]; then
     fi
 fi
 
-# Byte-compilierte Dateien entfernen, damit dpkg keine __pycache__-Reste zurücklässt.
+# Remove byte-compiled files so dpkg leaves no __pycache__ behind.
 if command -v py3clean >/dev/null 2>&1; then
     py3clean -p wintaskmanager || true
 else

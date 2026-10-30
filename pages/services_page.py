@@ -18,9 +18,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.i18n import N_, tr
 from app.system_info import StoppableWorker, WorkerStopped
 
-COLUMNS = ["Name", "Beschreibung", "Status"]
+COLUMNS = [N_("Name"), N_("Description"), N_("Status")]
 
 
 class ServiceListWorker(StoppableWorker):
@@ -63,10 +64,10 @@ class ServicesPage(QWidget):
         super().__init__(parent)
 
         self.search_box = QLineEdit()
-        self.search_box.setPlaceholderText("Dienste suchen...")
+        self.search_box.setPlaceholderText(tr("Search services..."))
         self.search_box.textChanged.connect(self._apply_filter)
 
-        self.refresh_btn = QPushButton("Aktualisieren")
+        self.refresh_btn = QPushButton(tr("Refresh"))
         self.refresh_btn.clicked.connect(self.refresh)
 
         top_bar = QHBoxLayout()
@@ -77,12 +78,12 @@ class ServicesPage(QWidget):
         # Shown instead of a modal dialog when there is nothing to list: without
         # systemd (containers, Alpine, Devuan, ...) a dialog would pop up on every
         # start and refresh, and headless (tests, offscreen) it would block forever.
-        self.hint_label = QLabel("Keine systemd-Dienste gefunden (systemctl nicht verfügbar).")
+        self.hint_label = QLabel(tr("No systemd services found (systemctl not available)."))
         self.hint_label.setWordWrap(True)
         self.hint_label.hide()
 
         self.table = QTableWidget(0, len(COLUMNS))
-        self.table.setHorizontalHeaderLabels(COLUMNS)
+        self.table.setHorizontalHeaderLabels([tr(name) for name in COLUMNS])
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)

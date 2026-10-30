@@ -35,12 +35,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.i18n import N_, format_decimal, tr
 from app.system_info import ProcessRow, ProcessWorker, kill_process
 from widgets.resizable_table import ResizableRowsTableView
 
-# Column order follows the Windows 10 "Prozesse" tab; PID/Benutzer/Threads come last.
-COLUMNS = ["Name", "Status", "CPU", "Arbeitsspeicher", "GPU", "GPU-Speicher",
-           "PID", "Benutzer", "Threads"]
+# Column order follows the Windows 10 "Processes" tab; PID/User/Threads come last.
+COLUMNS = [N_("Name"), N_("Status"), N_("CPU"), N_("Memory"), N_("GPU"), N_("GPU memory"),
+           N_("PID"), N_("User"), N_("Threads")]
 _COLUMN_WIDTHS_KEY = "processes_win10"
 _DEFAULT_COLUMN_WIDTHS = [280, 90, 75, 115, 75, 110, 70, 110, 70]
 _NUMERIC_COLUMNS = {2, 3, 4, 5, 6, 8}
@@ -49,9 +50,9 @@ _HEATMAP_COLUMNS = {2: 100.0, 3: 4096.0, 4: 100.0, 5: 4096.0}
 # Heat map colours (idle -> very busy) come from the colour scheme, see app.themes.
 _HEAT_RATIOS = (0.0, 0.3, 0.6, 1.0)
 _DEFAULT_HEAT = ["#fff4c4", "#ffe8a6", "#ffd27a", "#ffa04a"]  # Windows 10 yellow
-_STATUS_LABELS = {"stopped": "Angehalten", "zombie": "Zombie", "dead": "Beendet"}
+_STATUS_LABELS = {"stopped": N_("Stopped"), "zombie": N_("Zombie"), "dead": N_("Ended")}
 
-_REMOTE_ACTION_HINT = "Im Remote-Modus zeigt diese Liste Daten des Servers. Aktionen würden auf diesem PC ausgeführt und sind deshalb gesperrt."
+_REMOTE_ACTION_HINT = N_("In remote mode this list shows the server's data. Actions would run on this PC and are therefore locked.")
 
 TOTAL_ROLE = Qt.UserRole + 1
 INDENT_ROLE = Qt.UserRole + 2
@@ -61,16 +62,12 @@ _INDENT_STEP = 16
 _ARROW_SLOT = 16
 
 
-def _de_number(value: float, digits: int = 1) -> str:
-    return f"{value:.{digits}f}".replace(".", ",")
-
-
 def _format_percent(value: float) -> str:
-    return "0 %" if value < 0.05 else f"{_de_number(value)} %"
+    return "0 %" if value < 0.05 else f"{format_decimal(value)} %"
 
 
 def _format_mb(value: float) -> str:
-    return f"{_de_number(value)} MB"
+    return f"{format_decimal(value)} MB"
 
 
 def _scaled_font(font: QFont, factor: float) -> QFont:
@@ -168,7 +165,7 @@ class ProcessTableModel(QAbstractTableModel):
         if orientation != Qt.Horizontal:
             return None
         if role == Qt.DisplayRole:
-            return COLUMNS[section]
+            return tr(COLUMNS[section])
         if role == TOTAL_ROLE:
             return self._totals.get(section)
         return None
@@ -220,7 +217,7 @@ class ProcessTableModel(QAbstractTableModel):
         if col == 0:
             return f"{row.name} ({entry.count})" if entry.is_group else row.name
         if col == 1:
-            return "" if entry.is_group else _STATUS_LABELS.get(row.status, "")
+            return "" if entry.is_group else tr(_STATUS_LABELS.get(row.status, ""))
         if col == 2:
             return _format_percent(row.cpu_percent)
         if col == 3:
@@ -272,12 +269,12 @@ class ProcessTableModel(QAbstractTableModel):
         self._totals = {
             2: f"{cpu:.0f}%",
             3: (f"{memory_percent:.0f}%" if memory_percent is not None
-                else f"{_de_number(memory_mb / 1024)} GB"),
+                else f"{format_decimal(memory_mb / 1024)} GB"),
         }
         if gpu_values:
             self._totals[4] = f"{min(100.0, sum(gpu_values)):.0f}%"
         if vram_values:
-            self._totals[5] = f"{_de_number(sum(vram_values) / 1024)} GB"
+            self._totals[5] = f"{format_decimal(sum(vram_values) / 1024)} GB"
         self.headerDataChanged.emit(Qt.Horizontal, 2, 5)
 
     def set_filter(self, value: str) -> None:
@@ -304,8 +301,8 @@ class ProcessTableModel(QAbstractTableModel):
             apps = [row for row in rows if row.username == self._current_user]
             background = [row for row in rows if row.username != self._current_user]
             display_rows = []
-            self._append_category(display_rows, "apps", "Apps", apps)
-            self._append_category(display_rows, "background", "Hintergrundprozesse", background)
+            self._append_category(display_rows, "apps", tr("Apps"), apps)
+            self._append_category(display_rows, "background", tr("Background processes"), background)
         else:
             display_rows = [ProcessListEntry(process=row) for row in rows]
         self.beginResetModel()
@@ -498,18 +495,18 @@ class ProcessesPage(QWidget):
         self._remote_enabled = False
 
         self.search_box = QLineEdit()
-        self.search_box.setPlaceholderText("Prozesse suchen...")
+        self.search_box.setPlaceholderText(tr("Search processes..."))
         self.search_box.textChanged.connect(self.model.set_filter)
 
         self.search_box.setFixedWidth(260)
         self.search_box.setClearButtonEnabled(True)
 
         # Shown in the main window's footer (bottom right), like in Windows 10 ...
-        self.end_task_btn = QPushButton("Task beenden")
+        self.end_task_btn = QPushButton(tr("End task"))
         self.end_task_btn.setEnabled(False)
         self.end_task_btn.clicked.connect(self._end_selected_task)
         # ... and in the page header in the Windows 11 style.
-        self.header_end_task_btn = QPushButton("Task beenden")
+        self.header_end_task_btn = QPushButton(tr("End task"))
         self.header_end_task_btn.setEnabled(False)
         self.header_end_task_btn.clicked.connect(self._end_selected_task)
 
@@ -639,7 +636,7 @@ class ProcessesPage(QWidget):
         can_end = bool(self.table.selectionModel().selectedRows()) and not self._remote_enabled
         for button in (self.end_task_btn, self.header_end_task_btn):
             button.setEnabled(can_end)
-            button.setToolTip(_REMOTE_ACTION_HINT if self._remote_enabled else "")
+            button.setToolTip(tr(_REMOTE_ACTION_HINT) if self._remote_enabled else "")
 
     def _save_column_widths(self, *_args) -> None:
         widths = [self.table.columnWidth(col) for col in range(len(COLUMNS))]
@@ -651,14 +648,14 @@ class ProcessesPage(QWidget):
             return
         confirm = QMessageBox.question(
             self,
-            "Task beenden",
-            f"Möchtest du den Prozess mit PID {pid} wirklich beenden?",
+            tr("End task"),
+            tr("Do you really want to end the process with PID {pid}?", pid=pid),
         )
         if confirm != QMessageBox.Yes:
             return
         ok, error = kill_process(pid)
         if not ok:
-            QMessageBox.warning(self, "Fehler", f"Prozess konnte nicht beendet werden:\n{error}")
+            QMessageBox.warning(self, tr("Error"), tr("The process could not be ended:\n{error}", error=tr(error)))
 
     def place_search_box(self, header_layout: QHBoxLayout | None) -> None:
         """Move the search box into the Windows 11 page header (or back above the list)."""
@@ -674,19 +671,19 @@ class ProcessesPage(QWidget):
         self.header.set_colors(colors, separators=not win11)
 
     def run_new_task(self) -> None:
-        command, ok = QInputDialog.getText(self, "Befehl ausführen", "Befehl:")
+        command, ok = QInputDialog.getText(self, tr("Run command"), tr("Command:"))
         if not ok or not command.strip():
             return
         try:
             parts = shlex.split(command)
         except ValueError as error:
-            QMessageBox.warning(self, "Ungültiger Befehl", str(error))
+            QMessageBox.warning(self, tr("Invalid command"), str(error))
             return
         if not parts or not self._start_detached(parts[0], parts[1:]):
-            QMessageBox.warning(self, "Start fehlgeschlagen", "Der Befehl konnte nicht gestartet werden.")
+            QMessageBox.warning(self, tr("Start failed"), tr("The command could not be started."))
 
     def choose_and_start_file(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Datei starten")
+        path, _ = QFileDialog.getOpenFileName(self, tr("Start file"))
         if path:
             self._start_files([path])
 
@@ -700,8 +697,8 @@ class ProcessesPage(QWidget):
                 invalid_paths.append(path)
         if invalid_paths:
             QMessageBox.warning(
-                self, "Start fehlgeschlagen",
-                "Nur ausführbare Dateien können gestartet werden:\n" + "\n".join(invalid_paths),
+                self, tr("Start failed"),
+                tr("Only executable files can be started:\n{paths}", paths="\n".join(invalid_paths)),
             )
 
     @staticmethod

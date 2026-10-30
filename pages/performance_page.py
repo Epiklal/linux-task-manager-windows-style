@@ -34,32 +34,52 @@ from app.system_info import (
     list_physical_disks,
     system_snapshot,
 )
+from app.i18n import N_, format_decimal, tr
 from app.remote_client import RemoteSnapshotWorker
 from app.themes import WIN10_CHART_COLORS
 from widgets.live_chart import LiveChart
 from widgets.resource_tile import ResourceTile
 
 _DISK_PALETTE = ["#7fba00", "#3a96dd", "#ff8c00", "#e74856", "#00b294", "#767676"]
-_AXIS_LABELS = {"cpu": "% Auslastung", "memory": "Speicherverwendung",
-                "disk": "Aktive Zeit", "network": "Durchsatz", "gpu": "Auslastung"}
+_AXIS_LABELS = {"cpu": N_("% Utilization"), "memory": N_("Memory usage"),
+                "disk": N_("Active time"), "network": N_("Throughput"),
+                "gpu": N_("Utilization")}
 # Short values shown large (Windows 10 style) below the chart; the rest goes to the
 # key/value list on the right.
 _MAX_BIG_STATS = 6
 _MAX_BIG_VALUE_LEN = 14
-# Always listed on the right, like Windows 10's "Kerne: 16" / "Logische Prozessoren: 32".
-_SIDE_KEYS = {"Kerne", "Logische Prozessoren", "Adapter", "IPv4-Adresse",
-              "Verbindungsgeschwindigkeit", "Startvorgänge", "Betriebsstunden",
-              "Treiber", "Treiberversion", "Physischer Speicherort", "PCIe",
-              "Maximale Anbindung", "PCIe-Link", "PCIe-Status", "PCIe-Empfang",
-              "PCIe-Senden", "Leistungsaufnahme"}
+# Always listed on the right, like Windows 10's "Cores: 16" / "Logical processors: 32".
+_SIDE_KEYS = {N_("Cores"), N_("Logical processors"), N_("Adapter"), N_("IPv4 address"),
+              N_("Link speed"), N_("Power cycles"), N_("Power-on hours"),
+              N_("Driver"), N_("Driver version"), N_("Physical location"), "PCIe",
+              N_("Maximum link"), N_("PCIe link"), N_("PCIe status"), N_("PCIe receive"),
+              N_("PCIe send"), N_("Power draw")}
 # Network graphs never scale below this (KBit/s), so idle noise doesn't fill the graph.
 _NET_SCALE_FLOOR_KBIT = 100.0
 _GPU_MAX_GRAPHS = 10
 _GPU_GRAPH_COLUMNS = 2
 _GPU_DEFAULT_METRIC_ORDER = [
-    "3D", "Kopieren", "Video-Decode", "Video-Encode", "Compute", "JPEG",
-    "Speicher-Controller", "PCIe-Empfang", "PCIe-Senden", "Auslastung",
+    "3D", "Copy", "Video Decode", "Video Encode", "Compute", "JPEG",
+    "Memory Controller", N_("PCIe receive"), N_("PCIe send"), N_("Utilization"),
 ]
+
+# Older servers send these German engine names.
+_LEGACY_GPU_ENGINES = {
+    "Kopieren": "Copy",
+    "Video-Encode": "Video Encode",
+    "Video-Decode": "Video Decode",
+    "Video-Verarbeitung": "Video Processing",
+    "Speicher-Controller": "Memory Controller",
+}
+_PCI_LOCATION = re.compile(r"PCI bus (\d+), device (\d+), function (\d+)")
+
+
+def _pci_location_text(location: str) -> str:
+    match = _PCI_LOCATION.fullmatch(location)
+    if match is None:
+        return location
+    return tr("PCI bus {bus}, device {device}, function {function}",
+              bus=match[1], device=match[2], function=match[3])
 
 
 def _format_uptime(seconds: float) -> str:
@@ -77,23 +97,23 @@ def _format_bits(kbit_s: float, unit_from: float | None = None) -> str:
     `unit_from` (default: the value itself) so two values can share one unit."""
     reference = kbit_s if unit_from is None else unit_from
     if reference >= 1_000_000:
-        return f"{kbit_s / 1_000_000:.1f}".replace(".", ",") + " GBit/s"
+        return format_decimal(kbit_s / 1_000_000) + " GBit/s"
     if reference >= 1000:
-        return f"{kbit_s / 1000:.1f}".replace(".", ",") + " MBit/s"
+        return format_decimal(kbit_s / 1000) + " MBit/s"
     return f"{kbit_s:.0f} KBit/s"
 
 
 def _format_gb(mb: float | None) -> str | None:
-    return None if mb is None else f"{mb / 1024:.1f}".replace(".", ",")
+    return None if mb is None else format_decimal(mb / 1024)
 
 
 def _format_or_na(value: float | None, fmt: str, suffix: str = "") -> str:
-    return f"{value:{fmt}}{suffix}" if value is not None else "Nicht verfügbar"
+    return f"{value:{fmt}}{suffix}" if value is not None else tr("Not available")
 
 
 class GpuGraphSlot(QWidget):
     """One configurable GPU mini-graph row (like Windows' per-engine graphs).
-    Right-click offers 'Graph anzeigen als' (metric) and 'Anzahl Graphen' (count).
+    Right-click offers 'Show graph as' (metric) and 'Number of graphs' (count).
     """
 
     def __init__(self, metric: str, color: str, fixed: bool = False, parent=None):
@@ -107,7 +127,7 @@ class GpuGraphSlot(QWidget):
         if not fixed:
             # Like Windows 10: click the engine name to choose what the graph shows.
             self.title_label.setCursor(Qt.PointingHandCursor)
-            self.title_label.setToolTip("Klicken, um die angezeigte Engine zu wählen")
+            self.title_label.setToolTip(tr("Click to choose the engine shown"))
         self.value_label = QLabel("")
         self.value_label.setObjectName("tileValue")
         title_row = QHBoxLayout()
@@ -128,7 +148,7 @@ class GpuGraphSlot(QWidget):
 
     def set_metric(self, metric: str) -> None:
         self.metric_name = metric
-        self.title_label.setText(metric if self.fixed else f"{metric}  ▾")
+        self.title_label.setText(tr(metric) if self.fixed else f"{tr(metric)}  ▾")
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt override)
         if (not self.fixed and self.on_context_menu and event.button() == Qt.LeftButton
@@ -187,11 +207,12 @@ class StatsPanel(QWidget):
 
     def set_text(self, text: str) -> None:
         pairs, notes = self._parse(text)
+        side_keys = {tr(key) for key in _SIDE_KEYS}
         big_count = 0
         is_big = []
         for key, value in pairs:
             big = (big_count < _MAX_BIG_STATS and len(value) <= _MAX_BIG_VALUE_LEN
-                   and key not in _SIDE_KEYS)
+                   and key not in side_keys)
             big_count += big
             is_big.append(big)
         signature = (tuple(k for k, _ in pairs), tuple(is_big), len(notes))
@@ -229,7 +250,7 @@ class StatsPanel(QWidget):
                 value_label = QLabel()
                 value_label.setObjectName("statKeyValue")
                 value_label.setWordWrap(True)
-                # Wide enough that values like "Kein PCIe-Link-Limit erkannt" fit on one line.
+                # Wide enough that values like "No PCIe link limit detected" fit on one line.
                 value_label.setMinimumWidth(240)
                 self._kv_grid.addWidget(key_label, kv_row, 0, Qt.AlignTop)
                 self._kv_grid.addWidget(value_label, kv_row, 1, Qt.AlignTop)
@@ -270,7 +291,7 @@ class PerformancePage(QWidget):
         self._ram_speed_mhz = get_ram_speed_mhz()
         self._ram_temp_c, self._ram_temp_sensor_count = get_ram_temperature()
         self._disks = list_physical_disks() or [{
-            "device": "root", "model": "Datenträger", "kind": "", "interface": "",
+            "device": "root", "model": tr("Disk"), "kind": "", "interface": "",
             "used_bytes": 0, "total_bytes": 0, "temp_c": None, "mountpoints": ["/"],
         }]
         self._smart_disk_stats: dict[str, dict] = {}
@@ -284,14 +305,14 @@ class PerformancePage(QWidget):
 
         self.tiles: dict[str, ResourceTile] = {
             "cpu": ResourceTile("CPU", "#00b7c3"),
-            "memory": ResourceTile("Arbeitsspeicher", "#68217a"),
+            "memory": ResourceTile(tr("Memory"), "#68217a"),
         }
         for i, d in enumerate(self._disks):
             color = _DISK_PALETTE[i % len(_DISK_PALETTE)]
             self.tiles[f"disk:{d['device']}"] = ResourceTile(
-                f"Datenträger {i}", color, detail=d["device"]
+                tr("Disk {index}", index=i), color, detail=d["device"]
             )
-        self.tiles["network"] = ResourceTile("Netzwerk", "#e3a21a")
+        self.tiles["network"] = ResourceTile(tr("Network"), "#e3a21a")
         self.tiles["gpu"] = ResourceTile("GPU 0", "#c239b3")
 
         self._tile_order = ["cpu", "memory", *disk_keys, "network", "gpu"]
@@ -312,7 +333,7 @@ class PerformancePage(QWidget):
         self.detail_title.setObjectName("detailTitle")
         self.detail_subtitle = QLabel("")
         self.detail_subtitle.setObjectName("detailSubtitle")
-        self.core_toggle_btn = QPushButton("Pro Kern")
+        self.core_toggle_btn = QPushButton(tr("Per core"))
         self.core_toggle_btn.setCheckable(True)
         self.core_toggle_btn.toggled.connect(self._on_core_toggle)
         title_row = QHBoxLayout()
@@ -321,9 +342,9 @@ class PerformancePage(QWidget):
         title_row.addWidget(self.detail_subtitle, 0, Qt.AlignBottom)
         title_row.addWidget(self.core_toggle_btn, 0, Qt.AlignBottom)
 
-        self.axis_top_left = QLabel("% Auslastung")
+        self.axis_top_left = QLabel(tr(_AXIS_LABELS["cpu"]))
         self.axis_top_right = QLabel("100%")
-        self.axis_bottom_left = QLabel("60 Sekunden")
+        self.axis_bottom_left = QLabel(tr("60 seconds"))
         self.axis_bottom_right = QLabel("0")
         for label in (self.axis_top_left, self.axis_top_right,
                       self.axis_bottom_left, self.axis_bottom_right):
@@ -353,7 +374,7 @@ class PerformancePage(QWidget):
         self.chart_stack.addWidget(self.cores_widget)
 
         self._gpu_metric_order: list[str] = [
-            "Auslastung", *GPU_ENGINE_METRICS, "PCIe-Empfang", "PCIe-Senden",
+            N_("Utilization"), *GPU_ENGINE_METRICS, N_("PCIe receive"), N_("PCIe send"),
         ]
         self._gpu_history: dict[str, deque[float]] = {
             metric: deque([0.0] * 60, maxlen=60) for metric in self._gpu_metric_order
@@ -368,12 +389,12 @@ class PerformancePage(QWidget):
 
         self.gpu_vram_history: deque[float] = deque([0.0] * 60, maxlen=60)
         self.gpu_vram_slot = GpuGraphSlot(
-            "Nutzung des dedizierten GPU-Speichers", WIN10_CHART_COLORS["gpu"], fixed=True)
+            N_("Dedicated GPU memory usage"), WIN10_CHART_COLORS["gpu"], fixed=True)
         self.gpu_vram_slot.chart.set_data(self.gpu_vram_history)
         self.gpu_vram_slot.on_context_menu = self._show_gpu_context_menu
         self.gpu_shared_history: deque[float] = deque([0.0] * 60, maxlen=60)
         self.gpu_shared_slot = GpuGraphSlot(
-            "Nutzung des gemeinsam genutzten GPU-Speichers", WIN10_CHART_COLORS["gpu"], fixed=True)
+            N_("Shared GPU memory usage"), WIN10_CHART_COLORS["gpu"], fixed=True)
         self.gpu_shared_slot.chart.set_data(self.gpu_shared_history)
         self.gpu_shared_slot.on_context_menu = self._show_gpu_context_menu
         self._rebuild_gpu_slots()
@@ -410,12 +431,12 @@ class PerformancePage(QWidget):
             "cpu": "#00b7c3", "memory": "#68217a", "network": "#e3a21a", "gpu": "#c239b3",
         }
         self._labels = {
-            "cpu": "CPU", "memory": "Arbeitsspeicher", "network": "Netzwerk", "gpu": "GPU",
+            "cpu": "CPU", "memory": tr("Memory"), "network": tr("Network"), "gpu": "GPU",
         }
         for i, d in enumerate(self._disks):
             key = f"disk:{d['device']}"
             self._colors[key] = _DISK_PALETTE[i % len(_DISK_PALETTE)]
-            self._labels[key] = f"Datenträger {i} ({d['device']})"
+            self._labels[key] = tr("Disk {index} ({device})", index=i, device=d["device"])
 
         self._history: dict[str, deque[float]] = {
             key: deque([0.0] * 60, maxlen=60) for key in self._tile_order
@@ -522,15 +543,15 @@ class PerformancePage(QWidget):
     def _show_gpu_context_menu(self, slot: GpuGraphSlot, global_pos) -> None:
         menu = QMenu(self)
         if not slot.fixed:
-            change_menu = menu.addMenu("Graph anzeigen als")
+            change_menu = menu.addMenu(tr("Show graph as"))
             for metric in self._gpu_metric_order:
-                action = change_menu.addAction(metric)
+                action = change_menu.addAction(tr(metric))
                 action.setCheckable(True)
                 action.setChecked(metric == slot.metric_name)
                 action.triggered.connect(
                     lambda _checked=False, m=metric, s=slot: self._set_gpu_slot_metric(s, m)
                 )
-        count_menu = menu.addMenu("Anzahl Graphen")
+        count_menu = menu.addMenu(tr("Number of graphs"))
         for n in range(1, _GPU_MAX_GRAPHS + 1):
             action = count_menu.addAction(str(n))
             action.setCheckable(True)
@@ -550,7 +571,7 @@ class PerformancePage(QWidget):
         self._selected = key
         self.detail_title.setText(self._labels[key])
         self.detail_subtitle.setText(self._subtitles.get(key, ""))
-        self.axis_top_left.setText(_AXIS_LABELS[self._kind(key)])
+        self.axis_top_left.setText(tr(_AXIS_LABELS[self._kind(key)]))
         self.detail_chart.set_max_value(100.0)
         self.detail_chart.set_line_color(self._color_for(key))
         self.detail_chart.set_data(self._history[key])
@@ -585,7 +606,13 @@ class PerformancePage(QWidget):
 
     def _on_remote_snapshot_ready(self, payload: dict) -> None:
         self._remote_snapshot = payload
-        self._latest_gpu = payload.get("gpu")
+        gpu = payload.get("gpu")
+        if gpu and gpu.get("engines"):
+            gpu["engines"] = {
+                _LEGACY_GPU_ENGINES.get(name, name): value
+                for name, value in gpu["engines"].items()
+            }
+        self._latest_gpu = gpu
         remote_disks = payload.get("disks")
         if remote_disks:
             for index, local_disk in enumerate(self._disks):
@@ -608,7 +635,7 @@ class PerformancePage(QWidget):
                 break
             key = f"disk:{self._disks[index]['device']}"
             if key in self.tiles:
-                label = disk.get("model") or disk.get("device") or "Datenträger"
+                label = disk.get("model") or disk.get("device") or tr("Disk")
                 self.tiles[key].set_detail(label)
         remote_core_count = len((payload.get("system") or {}).get("cpu_per_core") or [])
         if remote_core_count and remote_core_count != self._core_count:
@@ -617,7 +644,7 @@ class PerformancePage(QWidget):
 
     def _on_remote_error(self, message: str) -> None:
         if self._selected == "cpu":
-            self.detail_info.set_text(f"Remote-Server nicht erreichbar: {message}")
+            self.detail_info.set_text(tr("Remote server unreachable: {message}", message=message))
 
     def set_remote_connection(self, enabled: bool, host: str, port: int, token: str) -> None:
         self._remote_enabled = enabled
@@ -680,8 +707,8 @@ class PerformancePage(QWidget):
             shared = max(sent_rate, recv_rate)
             unit = _format_bits(shared).split(" ")[-1]
             net_tile.value_label.setText(
-                f"S: {_format_bits(sent_rate, shared).split(' ')[0]} "
-                f"E: {_format_bits(recv_rate, shared).split(' ')[0]} {unit}"
+                f"{tr('S:')} {_format_bits(sent_rate, shared).split(' ')[0]} "
+                f"{tr('R:')} {_format_bits(recv_rate, shared).split(' ')[0]} {unit}"
             )
             net_tile.chart.advance_grid()
             net_tile.chart.update()
@@ -702,47 +729,47 @@ class PerformancePage(QWidget):
             # Temperature and power belong to the monitored server, not this PC.
             cpu_temp = self._remote_snapshot.get("cpu_temp_c")
             cpu_power = self._remote_snapshot.get("cpu_power_w")
-            cpu_power_reason = self._remote_snapshot.get("cpu_power_reason") or "Nicht verfügbar"
-        cpu_model = (
+            cpu_power_reason = self._remote_snapshot.get("cpu_power_reason") or N_("Not available")
+        cpu_model = tr(
             (self._remote_snapshot or {}).get("cpu_model") or self._cpu_model
         )
         values = {
             "cpu": (
                 snap["cpu_percent"],
                 f"{cpu_model}<br>"
-                f"Auslastung: {snap['cpu_percent']:.0f}%<br>"
-                f"Geschwindigkeit: {cpu_freq_ghz:.2f} GHz<br>"
-                f"Kerne: {snap['cpu_cores_physical']}<br>"
-                f"Logische Prozessoren: {snap['cpu_cores_logical']}<br>"
-                f"Temperatur: {_format_or_na(cpu_temp, '.0f', '°C')}<br>"
-                f"Leistungsaufnahme: "
-                f"{_format_or_na(cpu_power, '.1f', ' W') if cpu_power is not None else cpu_power_reason}<br>"
-                f"Prozesse: {snap['process_count']}<br>"
-                f"Betriebszeit: {_format_uptime(snap['uptime_seconds'])}",
+                f"{tr('Utilization')}: {snap['cpu_percent']:.0f}%<br>"
+                f"{tr('Speed')}: {cpu_freq_ghz:.2f} GHz<br>"
+                f"{tr('Cores')}: {snap['cpu_cores_physical']}<br>"
+                f"{tr('Logical processors')}: {snap['cpu_cores_logical']}<br>"
+                f"{tr('Temperature')}: {_format_or_na(cpu_temp, '.0f', '°C')}<br>"
+                f"{tr('Power draw')}: "
+                f"{_format_or_na(cpu_power, '.1f', ' W') if cpu_power is not None else tr(cpu_power_reason)}<br>"
+                f"{tr('Processes')}: {snap['process_count']}<br>"
+                f"{tr('Uptime')}: {_format_uptime(snap['uptime_seconds'])}",
             ),
             "memory": (
                 snap["mem_percent"],
-                f"Auslastung: {snap['mem_percent']:.0f}%<br>"
-                f"Verwendet: {snap['mem_used_gb']:.1f} GB<br>"
-                f"Verfügbar: {snap['mem_available_gb']:.1f} GB<br>"
-                f"Zwischenspeicher: {snap['mem_cached_gb']:.1f} GB<br>"
-                f"Gesamt: {snap['mem_total_gb']:.1f} GB<br>"
-                f"Geschwindigkeit: "
+                f"{tr('Utilization')}: {snap['mem_percent']:.0f}%<br>"
+                f"{tr('In use')}: {format_decimal(snap['mem_used_gb'])} GB<br>"
+                f"{tr('Available')}: {format_decimal(snap['mem_available_gb'])} GB<br>"
+                f"{tr('Cached')}: {format_decimal(snap['mem_cached_gb'])} GB<br>"
+                f"{tr('Total')}: {format_decimal(snap['mem_total_gb'])} GB<br>"
+                f"{tr('Speed')}: "
                 f"{_format_or_na(self._ram_speed_mhz, '.0f', ' MT/s')}<br>"
-                f"RAM-Temperatur: {_format_or_na(self._ram_temp_c, '.0f', '°C')}"
-                f"{f' ({self._ram_temp_sensor_count} Module)' if self._ram_temp_sensor_count else ''}",
+                f"{tr('RAM temperature')}: {_format_or_na(self._ram_temp_c, '.0f', '°C')}"
+                f"{tr(' ({count} modules)', count=self._ram_temp_sensor_count) if self._ram_temp_sensor_count else ''}",
             ),
             "network": (
                 None,  # history is appended above (unscaled KBit/s)
                 (
-                    f"Adapter: {net_info['name']}<br>"
-                    f"Senden: {_format_bits(sent_rate)}<br>"
-                    f"Empfangen: {_format_bits(recv_rate)}<br>"
-                    f"Verbindungsgeschwindigkeit: "
+                    f"{tr('Adapter')}: {net_info['name']}<br>"
+                    f"{tr('Send')}: {_format_bits(sent_rate)}<br>"
+                    f"{tr('Receive')}: {_format_bits(recv_rate)}<br>"
+                    f"{tr('Link speed')}: "
                     f"{_format_or_na(net_info['speed_mbps'], '.0f', ' Mbit/s')}<br>"
-                    f"IPv4-Adresse: {net_info['ipv4'] or 'Unbekannt'}<br>"
-                    f"Gesamt gesendet: {snap['net_sent'] / (1024 ** 2):.0f} MB<br>"
-                    f"Gesamt empfangen: {snap['net_recv'] / (1024 ** 2):.0f} MB"
+                    f"{tr('IPv4 address')}: {net_info['ipv4'] or tr('Unknown')}<br>"
+                    f"{tr('Total sent')}: {snap['net_sent'] / (1024 ** 2):.0f} MB<br>"
+                    f"{tr('Total received')}: {snap['net_recv'] / (1024 ** 2):.0f} MB"
                 ) if sent_rate is not None and net_info else "",
             ),
             "gpu": (
@@ -757,7 +784,7 @@ class PerformancePage(QWidget):
             values[key] = self._disk_stat(key, remote_disk or d, elapsed)
 
         self._subtitles["cpu"] = cpu_model
-        self._subtitles["memory"] = f"{snap['mem_total_gb']:.1f} GB".replace(".", ",")
+        self._subtitles["memory"] = f"{format_decimal(snap['mem_total_gb'])} GB"
         self._subtitles["network"] = net_info["name"] if net_info else ""
         self._subtitles["gpu"] = (gpu or {}).get("name", "")
         self.tiles["network"].set_detail(self._subtitles["network"])
@@ -806,50 +833,50 @@ class PerformancePage(QWidget):
         temperature = smart.get("temp_c", disk.get("temp_c"))
         read_total = smart.get("read_bytes_total")
         write_total = smart.get("write_bytes_total")
-        read_total_text = f"{read_total / (1024 ** 4):.2f} TB" if read_total is not None else "Nicht verfügbar"
-        write_total_text = f"{write_total / (1024 ** 4):.2f} TB" if write_total is not None else "Nicht verfügbar"
+        read_total_text = f"{read_total / (1024 ** 4):.2f} TB" if read_total is not None else tr("Not available")
+        write_total_text = f"{write_total / (1024 ** 4):.2f} TB" if write_total is not None else tr("Not available")
         text = (
             f"{disk['model']}" + (f" ({subtitle})" if subtitle else "") + "<br>"
-            f"Aktivität: {active_percent:.0f}%<br>"
-            f"Lesen: {read_rate:.1f} MB/s<br>"
-            f"Schreiben: {write_rate:.1f} MB/s<br>"
-            f"Insgesamt gelesen: {read_total_text}<br>"
-            f"Insgesamt geschrieben: {write_total_text}<br>"
-            f"Startvorgänge: {_format_or_na(smart.get('power_cycles'), '.0f')}<br>"
-            f"Betriebsstunden: {_format_or_na(smart.get('power_on_hours'), '.0f', ' h')}<br>"
-            f"Belegt: {used_gb:.0f}/{total_gb:.0f} GB<br>"
-            f"Temperatur: {_format_or_na(temperature, '.0f', '°C')}"
+            f"{tr('Activity')}: {active_percent:.0f}%<br>"
+            f"{tr('Read')}: {read_rate:.1f} MB/s<br>"
+            f"{tr('Write')}: {write_rate:.1f} MB/s<br>"
+            f"{tr('Total read')}: {read_total_text}<br>"
+            f"{tr('Total written')}: {write_total_text}<br>"
+            f"{tr('Power cycles')}: {_format_or_na(smart.get('power_cycles'), '.0f')}<br>"
+            f"{tr('Power-on hours')}: {_format_or_na(smart.get('power_on_hours'), '.0f', ' h')}<br>"
+            f"{tr('Used')}: {used_gb:.0f}/{total_gb:.0f} GB<br>"
+            f"{tr('Temperature')}: {_format_or_na(temperature, '.0f', '°C')}"
         )
         return active_percent, text
 
     def _format_gpu_text(self, gpu: dict | None, gpu_percent: float) -> str:
         if not gpu:
-            return "Nicht verfügbar"
+            return tr("Not available")
         vram_used = gpu.get("vram_used_mb")
         vram_total = gpu.get("vram_total_mb")
         gtt_used = gpu.get("gtt_used_mb")
         gtt_total = gpu.get("gtt_total_mb")
         dedicated = (f"{_format_gb(vram_used)}/{_format_gb(vram_total)} GB"
-                     if vram_used is not None and vram_total is not None else "Nicht verfügbar")
+                     if vram_used is not None and vram_total is not None else tr("Not available"))
         shared = (f"{_format_gb(gtt_used)}/{_format_gb(gtt_total)} GB"
-                  if gtt_used is not None and gtt_total is not None else "Nicht verfügbar")
+                  if gtt_used is not None and gtt_total is not None else tr("Not available"))
         known = [(u, t) for u, t in ((vram_used, vram_total), (gtt_used, gtt_total))
                  if u is not None and t is not None]
         total_memory = (
             f"{_format_gb(sum(u for u, _ in known))}/{_format_gb(sum(t for _, t in known))} GB"
-            if known else "Nicht verfügbar"
+            if known else tr("Not available")
         )
         pcie = gpu.get("pcie") or {}
-        pcie_generation = pcie.get("generation") or "Nicht verfügbar"
-        pcie_width = f"x{pcie['current_width']}" if pcie.get("current_width") else "Nicht verfügbar"
+        pcie_generation = pcie.get("generation") or tr("Not available")
+        pcie_width = f"x{pcie['current_width']}" if pcie.get("current_width") else tr("Not available")
         pcie_max = pcie.get("max_generation")
         if pcie_max and pcie.get("max_width"):
             pcie_max = f"{pcie_max} x{pcie['max_width']}"
         else:
-            pcie_max = "Nicht verfügbar"
+            pcie_max = tr("Not available")
         pcie_capacity = (
             f"{pcie['bandwidth_gb_s']:.2f} GB/s"
-            if pcie.get("bandwidth_gb_s") is not None else "Nicht verfügbar"
+            if pcie.get("bandwidth_gb_s") is not None else tr("Not available")
         )
         current_speed = pcie.get("current_speed_gt_s")
         max_speed = pcie.get("max_speed_gt_s")
@@ -861,32 +888,32 @@ class PerformancePage(QWidget):
             and (current_speed < max_speed or current_width < max_width)
         )
         if link_reduced and gpu_percent >= 90:
-            pcie_status = "Mögliche PCIe-Limitierung: GPU hoch ausgelastet, Link reduziert"
+            pcie_status = tr("Possible PCIe limitation: GPU highly utilized, link reduced")
         elif current_speed is not None and current_width is not None:
-            pcie_status = "Kein PCIe-Link-Limit erkannt"
+            pcie_status = tr("No PCIe link limit detected")
         else:
-            pcie_status = "PCIe-Limitierung nicht bestimmbar"
+            pcie_status = tr("PCIe limitation cannot be determined")
         return (
             f"{gpu.get('name', 'GPU')}<br>"
-            f"Auslastung: {gpu_percent:.0f}%<br>"
-            f"Dedizierter GPU-Speicher: {dedicated}<br>"
-            f"GPU-Speicher: {total_memory}<br>"
-            f"Gemeinsam genutzter GPU-Speicher: {shared}<br>"
-            f"GPU-Temperatur: {_format_or_na(gpu.get('temp_c'), '.0f', ' °C')}<br>"
-            f"Treiber: {gpu.get('driver') or 'Nicht verfügbar'}<br>"
-            f"Treiberversion: {gpu.get('driver_version') or 'Nicht verfügbar'}<br>"
-            f"Physischer Speicherort: {gpu.get('pci_location') or 'Nicht verfügbar'}<br>"
+            f"{tr('Utilization')}: {gpu_percent:.0f}%<br>"
+            f"{tr('Dedicated GPU memory')}: {dedicated}<br>"
+            f"{tr('GPU memory')}: {total_memory}<br>"
+            f"{tr('Shared GPU memory')}: {shared}<br>"
+            f"{tr('GPU temperature')}: {_format_or_na(gpu.get('temp_c'), '.0f', ' °C')}<br>"
+            f"{tr('Driver')}: {gpu.get('driver') or tr('Not available')}<br>"
+            f"{tr('Driver version')}: {gpu.get('driver_version') or tr('Not available')}<br>"
+            f"{tr('Physical location')}: {_pci_location_text(gpu.get('pci_location') or tr('Not available'))}<br>"
             f"PCIe: {pcie_generation}, {pcie_width}<br>"
-            f"Maximale Anbindung: {pcie_max}<br>"
-            f"PCIe-Link: {pcie_capacity} theoretisch<br>"
-            f"PCIe-Status: {pcie_status}<br>"
-            + (f"PCIe-Empfang: {pcie['rx_mb_s']:.1f} MB/s<br>"
+            f"{tr('Maximum link')}: {pcie_max}<br>"
+            f"{tr('PCIe link: {capacity} theoretical', capacity=pcie_capacity)}<br>"
+            f"{tr('PCIe status')}: {pcie_status}<br>"
+            + (f"{tr('PCIe receive')}: {pcie['rx_mb_s']:.1f} MB/s<br>"
                if pcie.get("rx_mb_s") is not None else "")
-            + (f"PCIe-Senden: {pcie['tx_mb_s']:.1f} MB/s<br>"
+            + (f"{tr('PCIe send')}: {pcie['tx_mb_s']:.1f} MB/s<br>"
                if pcie.get("tx_mb_s") is not None else "")
-            + "Leistungsaufnahme: "
+            + f"{tr('Power draw')}: "
             + (f"{gpu['power_w']:.1f} W" if gpu.get("power_w") is not None
-               else gpu.get("power_reason") or "Nicht verfügbar")
+               else tr(gpu.get("power_reason") or N_("Not available")))
         )
 
     def _update_gpu_graphs(self, gpu: dict | None, gpu_percent: float) -> None:
@@ -896,10 +923,10 @@ class PerformancePage(QWidget):
 
         pcie = (gpu or {}).get("pcie") or {}
         current_values = {
-            "Auslastung": gpu_percent,
+            N_("Utilization"): gpu_percent,
             **engines,
-            "PCIe-Empfang": pcie.get("rx_mb_s"),
-            "PCIe-Senden": pcie.get("tx_mb_s"),
+            N_("PCIe receive"): pcie.get("rx_mb_s"),
+            N_("PCIe send"): pcie.get("tx_mb_s"),
         }
         for metric, value in current_values.items():
             history = self._gpu_history.get(metric)
@@ -920,13 +947,13 @@ class PerformancePage(QWidget):
         vram_percent = (vram_used / vram_total * 100) if vram_used is not None and vram_total else 0.0
         self.gpu_vram_history.append(max(0.0, min(vram_percent, 100.0)))
         self.gpu_vram_slot.value_label.setText(
-            f"{_format_gb(vram_total)} GB" if vram_total else "Nicht verfügbar")
+            f"{_format_gb(vram_total)} GB" if vram_total else tr("Not available"))
         gtt_used = gpu.get("gtt_used_mb") if gpu else None
         gtt_total = gpu.get("gtt_total_mb") if gpu else None
         gtt_percent = (gtt_used / gtt_total * 100) if gtt_used is not None and gtt_total else 0.0
         self.gpu_shared_history.append(max(0.0, min(gtt_percent, 100.0)))
         self.gpu_shared_slot.value_label.setText(
-            f"{_format_gb(gtt_total)} GB" if gtt_total else "Nicht verfügbar")
+            f"{_format_gb(gtt_total)} GB" if gtt_total else tr("Not available"))
         for slot in (self.gpu_vram_slot, self.gpu_shared_slot):
             slot.chart.advance_grid()
             if show_gpu:

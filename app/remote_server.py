@@ -12,12 +12,17 @@ import time
 from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from app.i18n import N_, language_override, tr
+
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8765
 # Benchmark requests are tiny JSON objects; anything bigger is refused.
 MAX_REQUEST_BYTES = 16 * 1024
 MAX_BENCHMARK_SECONDS = 300
 MAX_PRIME_LIMIT = 10_000_000
+_BENCHMARK_LABELS = {"cpu": N_("CPU"), "memory": N_("Memory"), "gpu": N_("GPU"), "disk": N_("Disk")}
+# Clients from before the language switch send no language and expect German.
+_LEGACY_CLIENT_LANGUAGE = "de"
 
 
 class BenchmarkBusyError(Exception):
@@ -30,9 +35,13 @@ def make_benchmark_runner(list_disks, worker_class):
     benchmark_lock = threading.Lock()
 
     def run_benchmark(request: dict) -> dict:
+        with language_override(str(request.get("language", _LEGACY_CLIENT_LANGUAGE))):
+            return _run_benchmark(request)
+
+    def _run_benchmark(request: dict) -> dict:
         kind = request.get("kind")
-        if kind not in {"cpu", "memory", "gpu", "disk"}:
-            raise ValueError("Unbekannter Benchmark")
+        if kind not in _BENCHMARK_LABELS:
+            raise ValueError(tr("Unknown benchmark"))
         # Clamp everything a client can send, so a request can't keep the server
         # busy for days or spawn thousands of threads.
         cpu_count = os.cpu_count() or 1
@@ -47,19 +56,17 @@ def make_benchmark_runner(list_disks, worker_class):
         disk_directory = request.get("disk_directory")
         if disk_directory not in allowed_dirs:
             if kind == "disk" and disk_directory:
-                raise ValueError(f"Ziel nicht erlaubt: {disk_directory}")
+                raise ValueError(tr("Target not allowed: {directory}", directory=disk_directory))
             disk_directory = allowed_dirs[0] if allowed_dirs else None
         if not benchmark_lock.acquire(blocking=False):
-            raise BenchmarkBusyError("Auf dem Server läuft bereits ein Benchmark")
+            raise BenchmarkBusyError(tr("A benchmark is already running on the server"))
         try:
             worker = worker_class(
                 [kind], cpu_threads, cpu_seconds, cpu_max_prime, disk_directory)
             result, details = getattr(worker, f"_run_{kind}")()
         finally:
             benchmark_lock.release()
-        return {"label": {"cpu": "CPU", "memory": "Arbeitsspeicher",
-                           "gpu": "GPU", "disk": "Datenträger"}[kind],
-                "result": result, "details": details}
+        return {"label": tr(_BENCHMARK_LABELS[kind]), "result": result, "details": details}
 
     return run_benchmark
 
@@ -114,7 +121,7 @@ class MonitoringHandler(BaseHTTPRequestHandler):
         try:
             request = json.loads(self.rfile.read(length))
             if not isinstance(request, dict):
-                raise ValueError("Anfrage muss ein JSON-Objekt sein")
+                raise ValueError("request must be a JSON object")
             result = type(self).benchmark(request)
             self._send_json(result)
         except BenchmarkBusyError as error:
@@ -192,18 +199,18 @@ def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
     MonitoringHandler.token = token
     server = ThreadingHTTPServer((host, port), MonitoringHandler)
     display_host = host if host not in ("0.0.0.0", "::") else _local_ip()
-    print(f"WinTaskManager Server läuft auf http://{display_host}:{port}", flush=True)
+    print(tr("WinTaskManager server running on http://{host}:{port}", host=display_host, port=port), flush=True)
     if token:
-        print(f"Zugriffsschlüssel: {token}", flush=True)
+        print(tr("Access token: {token}", token=token), flush=True)
     else:
-        print("WARNUNG: Server läuft OHNE Zugriffsschlüssel (--no-auth). Jeder, der "
-              "diesen Port erreicht, kann alle Daten lesen und Benchmarks starten.",
+        print(tr("WARNING: Server is running WITHOUT an access token (--no-auth). Anyone "
+                 "who can reach this port can read all data and start benchmarks."),
               flush=True)
-    print("Beenden mit Strg+C", flush=True)
+    print(tr("Press Ctrl+C to quit"), flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\nServer wird beendet.", flush=True)
+        print(tr("\nServer is shutting down."), flush=True)
     finally:
         server.server_close()
 
@@ -218,17 +225,17 @@ def _local_ip() -> str:
 
 
 def server_from_args(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="WinTaskManager Monitoring-Server")
+    parser = argparse.ArgumentParser(description=tr("WinTaskManager monitoring server"))
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
-    parser.add_argument("--token", help="Eigener Bearer-Schlüssel (sonst wird einer erzeugt)")
+    parser.add_argument("--token", help=tr("Your own bearer token (otherwise one is generated)"))
     parser.add_argument("--generate-token", action="store_true",
-                        help="Zufälligen Zugriffsschlüssel erzeugen (Standard)")
+                        help=tr("Generate a random access token (default)"))
     parser.add_argument("--no-auth", action="store_true",
-                        help="Ohne Zugriffsschlüssel starten (nur in vertrauenswürdigen Netzen!)")
+                        help=tr("Start without an access token (only on trusted networks!)"))
     args = parser.parse_args(argv)
     if args.no_auth and args.token:
-        parser.error("--no-auth und --token schließen sich aus")
+        parser.error(tr("--no-auth and --token are mutually exclusive"))
     # A token is always required unless explicitly disabled.
     token = None if args.no_auth else (args.token or secrets.token_urlsafe(24))
     run_server(args.host, args.port, token)

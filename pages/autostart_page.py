@@ -15,16 +15,19 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.i18n import N_, tr
 from app.system_info import (
     AutostartEntry, StoppableWorker, list_autostart_entries, set_autostart_enabled,
 )
 from widgets.resizable_table import ResizableRowsTableWidget
 
-COLUMNS = ["Name", "Befehl", "Quelle", "Status"]
+COLUMNS = [N_("Name"), N_("Command"), N_("Source"), N_("Status")]
+# The third key is what older, German-only servers send.
+_SOURCE_LABELS = {"user": N_("User"), "system": N_("System"), "Benutzer": N_("User"), "System": N_("System")}
 _DEFAULT_COLUMN_WIDTHS = [200, 320, 90, 100]
 
 
-_REMOTE_ACTION_HINT = "Im Remote-Modus zeigt diese Liste Daten des Servers. Aktionen würden auf diesem PC ausgeführt und sind deshalb gesperrt."
+_REMOTE_ACTION_HINT = N_("In remote mode this list shows the server's data. Actions would run on this PC and are therefore locked.")
 
 class AutostartListWorker(StoppableWorker):
     entriesReady = Signal(list)
@@ -41,14 +44,14 @@ class AutostartPage(QWidget):
         self.settings = settings
 
         self.search_box = QLineEdit()
-        self.search_box.setPlaceholderText("Autostart-Einträge suchen...")
+        self.search_box.setPlaceholderText(tr("Search autostart entries..."))
         self.search_box.textChanged.connect(self._apply_filter)
 
-        self.toggle_btn = QPushButton("Aktivieren/Deaktivieren")
+        self.toggle_btn = QPushButton(tr("Enable/Disable"))
         self.toggle_btn.setEnabled(False)
         self.toggle_btn.clicked.connect(self._toggle_selected)
 
-        self.refresh_btn = QPushButton("Aktualisieren")
+        self.refresh_btn = QPushButton(tr("Refresh"))
         self.refresh_btn.clicked.connect(self.refresh)
 
         top_bar = QHBoxLayout()
@@ -58,11 +61,11 @@ class AutostartPage(QWidget):
         top_bar.addWidget(self.refresh_btn)
 
         self.table = ResizableRowsTableWidget(0, len(COLUMNS))
-        self.table.setHorizontalHeaderLabels(COLUMNS)
+        self.table.setHorizontalHeaderLabels([tr(name) for name in COLUMNS])
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
-        # Interactive on every column (not Stretch) so Befehl can be dragged wider too.
+        # Interactive on every column (not Stretch) so Command can be dragged wider too.
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.table.verticalHeader().setVisible(False)
         saved_widths = self.settings.column_widths("autostart")
@@ -114,9 +117,9 @@ class AutostartPage(QWidget):
             name_item.setData(Qt.UserRole, entry.filename)
             self.table.setItem(row_idx, 0, name_item)
             self.table.setItem(row_idx, 1, QTableWidgetItem(entry.command))
-            self.table.setItem(row_idx, 2, QTableWidgetItem(entry.source))
+            self.table.setItem(row_idx, 2, QTableWidgetItem(tr(_SOURCE_LABELS.get(entry.source, entry.source))))
             self.table.setItem(row_idx, 3, QTableWidgetItem(
-                "Aktiviert" if entry.enabled else "Deaktiviert"
+                tr("Enabled") if entry.enabled else tr("Disabled")
             ))
         self._on_selection_changed()
 
@@ -131,7 +134,7 @@ class AutostartPage(QWidget):
         # Remote entries describe files on the server; toggling would edit local files.
         remote = self._remote_entries is not None
         self.toggle_btn.setEnabled(self._selected_entry() is not None and not remote)
-        self.toggle_btn.setToolTip(_REMOTE_ACTION_HINT if remote else "")
+        self.toggle_btn.setToolTip(tr(_REMOTE_ACTION_HINT) if remote else "")
 
     def _save_column_widths(self, *_args) -> None:
         widths = [self.table.columnWidth(col) for col in range(len(COLUMNS))]
@@ -143,7 +146,7 @@ class AutostartPage(QWidget):
             return
         ok, error = set_autostart_enabled(entry, not entry.enabled)
         if not ok:
-            QMessageBox.warning(self, "Fehler", f"Autostart konnte nicht geändert werden:\n{error}")
+            QMessageBox.warning(self, tr("Error"), tr("Autostart could not be changed:\n{error}", error=tr(error)))
             return
         self.refresh()
 

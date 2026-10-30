@@ -11,6 +11,7 @@ APP = "TaskManager"
 
 DEFAULT_THEME = "light"
 DEFAULT_STYLE = "win10"  # "win10" or "win11" window layout / look
+DEFAULT_LANGUAGE = "system"  # "system" follows the locale; otherwise "de" or "en"
 DEFAULT_PROCESS_INTERVAL_MS = 1000
 DEFAULT_PERFORMANCE_INTERVAL_MS = 500
 DEFAULT_REMOTE_HOST = "127.0.0.1"
@@ -44,6 +45,15 @@ class Settings:
     @theme.setter
     def theme(self, value: str) -> None:
         self._store.setValue("theme", value)
+
+    @property
+    def language(self) -> str:
+        value = self._store.value("language", DEFAULT_LANGUAGE, type=str)
+        return value if value in ("system", "de", "en") else DEFAULT_LANGUAGE
+
+    @language.setter
+    def language(self, value: str) -> None:
+        self._store.setValue("language", value)
 
     @property
     def style(self) -> str:
