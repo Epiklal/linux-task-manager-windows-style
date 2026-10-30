@@ -5,6 +5,7 @@ import os
 import signal
 import sys
 
+from app.i18n import tr
 from app.remote_server import server_from_args
 
 
@@ -28,7 +29,15 @@ def main() -> int:
         server_args = [arg for arg in sys.argv[1:] if arg != "--server"]
         server_from_args(server_args)
         return 0
-    from PySide6.QtWidgets import QApplication
+    try:
+        from PySide6.QtWidgets import QApplication
+    except ImportError as error:
+        # PySide6 can be present while the system libraries Qt needs are not.
+        print(tr("Lintask cannot start because Qt could not be loaded: {error}", error=error),
+              file=sys.stderr)
+        print(tr("Installed from Git: run ./install.sh again. "
+                 "Installed as a package: reinstall the package."), file=sys.stderr)
+        return 1
     from app.main_window import MainWindow
 
     app = QApplication(sys.argv)

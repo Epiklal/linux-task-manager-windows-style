@@ -94,7 +94,8 @@ installs:
 | Package | Used for | Required? |
 | --- | --- | --- |
 | `python3`, `python3-venv`, `python3-pip` | Running the application | Yes |
-| `libxcb-cursor0` / `xcb-util-cursor` | Needed by Qt 6.5+ to start on X11 | Yes (X11) |
+| Qt runtime libraries (`libxcb-*`, `libxkbcommon-x11-0`, `libegl1`, `libgl1`, `libfontconfig1`, `libdbus-1-3`, ...; named after each distribution) | Needed by Qt to start; a minimal installation has few of them | Yes |
+| `fonts-dejavu-core` / `dejavu-sans-fonts` / `ttf-dejavu` | Without any font Qt draws every letter as a box | Yes |
 | `smartmontools` | Disk health data (SMART): temperature, power-on hours, lifetime reads/writes | Optional |
 | `lm-sensors` | Hardware sensors and temperatures | Optional |
 | `dmidecode` | RAM speed and module information | Optional |
@@ -193,6 +194,12 @@ downloaded from PyPI. The `./install.sh` installer supports:
 | openSUSE | `zypper` |
 | Alpine Linux | `apk` |
 
+At the end it checks that Qt really loads and stops with the names of any missing
+libraries instead of reporting success. On Arch, `pacman` fails on a fresh system
+because the package database is outdated, and Arch only supports full upgrades:
+in a terminal `./install.sh` then offers `pacman -Syu` and `pacman` asks you to
+confirm; without a terminal it stops and tells you to run that yourself.
+
 Any other distribution works too if Python 3 (with `venv` and `pip`) is installed:
 the installer then skips the system packages and sets up the application anyway.
 Install the optional tools yourself if you want the related data.
@@ -244,8 +251,13 @@ a terminal:
 
 ```bash
 cd ~/Downloads
+sudo apt update
 sudo apt install ./lintask_*.deb
 ```
+
+Run `sudo apt update` first on a freshly installed system: its package lists are
+as old as the installation medium, and `apt` then fails with 404 errors for the
+dependencies.
 
 Do not use `dpkg -i` directly: it does not install the dependencies. If you did,
 `sudo apt install -f` completes the installation.

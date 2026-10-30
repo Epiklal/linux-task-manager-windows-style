@@ -1323,7 +1323,7 @@ class ProcessWorker(StoppableWorker):
             try:
                 with proc.oneshot():
                     name = proc.name()
-                    username = proc.username() if proc.is_running() else ""
+                    username = proc.username()
                     status = proc.status()
                     cpu = proc.cpu_percent(interval=None)
                     mem = proc.memory_info().rss / (1024 * 1024)

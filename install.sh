@@ -22,7 +22,9 @@ on_error() {
 }
 trap 'on_error $LINENO "$BASH_COMMAND"' ERR
 
-# Required: Python with venv/pip, and xcb-cursor (Qt >= 6.5 needs it on X11).
+# Required: Python with venv/pip, the libraries Qt needs at runtime and a font.
+# The PySide6 wheel from pip brings Qt itself but none of these, and a minimal
+# installation has few of them (apt list: same as packaging/debian/control.in).
 # Where the distribution ships a current PySide6 (Arch: pyside6) it is installed
 # as well, so nothing has to be downloaded with pip (see the venv step below).
 # Optional: tools for hardware data and benchmarks. A missing optional package
@@ -32,23 +34,39 @@ REQUIRED=()
 OPTIONAL=()
 if command -v apt-get >/dev/null; then
     PM="apt"
-    REQUIRED=(python3 python3-venv python3-pip libxcb-cursor0)
+    REQUIRED=(python3 python3-venv python3-pip
+              libxcb-cursor0 libxkbcommon0 libxkbcommon-x11-0 libx11-xcb1
+              libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0
+              libxcb-shape0 libxcb-sync1 libxcb-xfixes0 libxcb-xinerama0 libxcb-xkb1 libxcb-util1
+              libegl1 libgl1 libopengl0 libfontconfig1 libfreetype6 libdbus-1-3
+              libxrender1 libxi6 libsm6 libice6 libglib2.0-0 fonts-dejavu-core)
     OPTIONAL=(smartmontools lm-sensors dmidecode sysbench fio glmark2 pciutils)
 elif command -v dnf >/dev/null; then
     PM="dnf"
-    REQUIRED=(python3 python3-pip xcb-util-cursor)
+    REQUIRED=(python3 python3-pip
+              xcb-util-cursor libxkbcommon-x11 libX11-xcb
+              xcb-util-wm xcb-util-keysyms xcb-util-image xcb-util-renderutil
+              libglvnd-egl libglvnd-glx libglvnd-opengl fontconfig dbus-libs
+              libXrender libSM libICE glib2 dejavu-sans-fonts)
     OPTIONAL=(smartmontools lm_sensors dmidecode sysbench fio glmark2 pciutils)
 elif command -v pacman >/dev/null; then
     PM="pacman"
-    REQUIRED=(python pyside6 python-psutil xcb-util-cursor)
+    REQUIRED=(python pyside6 python-psutil xcb-util-cursor ttf-dejavu)
     OPTIONAL=(smartmontools lm_sensors dmidecode sysbench fio glmark2 pciutils)
 elif command -v zypper >/dev/null; then
     PM="zypper"
-    REQUIRED=(python3 python3-pip libxcb-cursor0)
+    REQUIRED=(python3 python3-pip
+              libxcb-cursor0 libxkbcommon-x11-0 libX11-xcb1
+              libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0
+              libxcb-shape0 libxcb-sync1 libxcb-xfixes0 libxcb-xinerama0 libxcb-xkb1
+              libEGL1 libGL1 libOpenGL0 libfontconfig1 libdbus-1-3
+              libXrender1 libSM6 libICE6 libglib-2_0-0 dejavu-fonts)
     OPTIONAL=(smartmontools sensors dmidecode sysbench fio glmark2 pciutils)
 elif command -v apk >/dev/null; then
     PM="apk"
-    REQUIRED=(python3 py3-pip xcb-util-cursor)
+    REQUIRED=(python3 py3-pip
+              xcb-util-cursor libxkbcommon xcb-util-wm xcb-util-keysyms xcb-util-image
+              xcb-util-renderutil mesa-egl mesa-gl fontconfig dbus-libs font-dejavu)
     OPTIONAL=(smartmontools lm-sensors dmidecode sysbench fio glmark2 pciutils)
 fi
 
@@ -78,24 +96,41 @@ pm_install() {
     esac
 }
 
+# A fresh Arch has a stale package database, so pacman -S fails with 404 errors.
+# Arch only supports full upgrades ("pacman -Sy" alone causes partial upgrades), and
+# upgrading the whole system is the user's decision: pacman asks, without --noconfirm.
+upgrade_arch_or_abort() {
+    echo "pacman could not install the packages. The package database is probably outdated;" >&2
+    echo "Arch only supports upgrading the whole system." >&2
+    if [[ -t 0 ]] && $SUDO pacman -Syu --needed "${REQUIRED[@]}"; then
+        return
+    fi
+    echo "ERROR: Please run this and then ./install.sh again:" >&2
+    echo "    sudo pacman -Syu" >&2
+    exit 1
+}
+
 MISSING_OPTIONAL=()
 install_system_packages() {
     if [[ -z "$PM" ]]; then
         echo "Unknown package manager - skipping system packages." >&2
-        echo "Required: Python 3 with venv and pip. Optional: smartmontools, lm-sensors," >&2
-        echo "dmidecode, sysbench, fio, glmark2, pciutils, xcb-cursor." >&2
+        echo "Required: Python 3 with venv and pip, the X11 and OpenGL libraries Qt needs, a font." >&2
+        echo "Optional: smartmontools, lm-sensors, dmidecode, sysbench, fio, glmark2, pciutils." >&2
         return
     fi
     echo "Installing system packages ($PM) ..."
-    # (No "pacman -Sy" on Arch: refreshing without upgrading causes partial upgrades.)
     if [[ "$PM" == "apt" ]]; then
         $SUDO apt-get update || echo "Warning: apt-get update failed." >&2
     fi
     if ! pm_install "${REQUIRED[@]}"; then
-        # xcb-cursor may be named differently on old releases; Python is what matters.
-        echo "Warning: not all required packages (${REQUIRED[*]}) could be installed." >&2
         if [[ "$PM" == "pacman" ]]; then
-            echo "On Arch, running 'sudo pacman -Syu' first usually helps (outdated package database)." >&2
+            upgrade_arch_or_abort
+        else
+            # One name may differ on this release; verify_qt below decides what really counts.
+            echo "Warning: not all required packages could be installed - trying one by one." >&2
+            for package in "${REQUIRED[@]}"; do
+                pm_install "$package" || echo "Warning: package not available: $package" >&2
+            done
         fi
     fi
     # Try all optional packages at once; if that fails, one by one.
@@ -143,6 +178,36 @@ else
         || echo "Warning: pip could not be updated - continuing with the existing version." >&2
     echo "Installing Python packages (PySide6 is ~100 MB - this can take a few minutes) ..."
     "$VENV_DIR/bin/python" -m pip install -r "$APP_DIR/requirements.txt"
+fi
+
+# Only a Qt that really loads counts as installed; otherwise the failure would
+# show up later as an application that doesn't start. The X11 plugin links
+# against the libraries from REQUIRED, ldd names the ones that are missing.
+QT_PLUGINS_CHECK='from PySide6.QtCore import QLibraryInfo
+import PySide6.QtWidgets, psutil
+print(QLibraryInfo.path(QLibraryInfo.PluginsPath))'
+verify_qt() {
+    local plugins missing=""
+    if ! plugins="$("$VENV_DIR/bin/python" -c "$QT_PLUGINS_CHECK" 2>&1)"; then
+        echo "ERROR: Qt could not be loaded after the installation:" >&2
+        echo "$plugins" | tail -n 3 >&2
+        return 1
+    fi
+    if [[ -e "$plugins/platforms/libqxcb.so" ]] && command -v ldd >/dev/null; then
+        missing="$(ldd "$plugins/platforms/libqxcb.so" | awk '/not found/ {print $1}' | sort -u)" || true
+    fi
+    if [[ -n "$missing" ]]; then
+        echo "ERROR: Qt needs system libraries that are not installed:" >&2
+        echo "$missing" | sed 's/^/    /' >&2
+        return 1
+    fi
+}
+if ! verify_qt; then
+    if [[ -n "$PM" ]]; then
+        echo "Packages for this: ${REQUIRED[*]}" >&2
+    fi
+    echo "After fixing it, simply run ./install.sh again." >&2
+    exit 1
 fi
 
 # ZIP downloads from GitHub lose the executable bit (and "sh install.sh" works without it).

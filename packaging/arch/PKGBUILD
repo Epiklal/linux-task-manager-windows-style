@@ -11,14 +11,15 @@
 
 pkgname=lintask
 pkgver=1.0.0
-pkgrel=1
+pkgrel=2
 pkgdesc="Task manager for Linux: processes, performance, services, autostart, benchmarks, remote monitoring"
 arch=('any')
 url="https://github.com/Epiklal/lintask"
 # The project has no license file yet (see packaging/debian/copyright), hence no
 # SPDX identifier; the text ends up in /usr/share/licenses/lintask/.
 license=('LicenseRef-Unspecified')
-depends=('python>=3.9' 'pyside6>=6.6' 'python-psutil')
+# ttf-font: a fresh Arch has no font at all and Qt would draw every letter as a box.
+depends=('python>=3.9' 'pyside6>=6.6' 'python-psutil' 'ttf-font')
 optdepends=('smartmontools: SMART values, temperatures and power-on times of disks'
             'dmidecode: details about memory modules and the mainboard'
             'lm_sensors: CPU and mainboard temperatures'

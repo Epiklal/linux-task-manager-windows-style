@@ -271,4 +271,10 @@ GERMAN = {
     "Done: SMART and memory data can now be read.": "Fertig: SMART- und RAM-Daten können jetzt gelesen werden.",
     "Setup failed - no sudo rule was installed.": "Einrichtung fehlgeschlagen - es wurde keine sudo-Regel installiert.",
     "Press Enter to close ": "Zum Schließen Enter drücken ",
+
+    # main.py, when Qt cannot be loaded
+    "Lintask cannot start because Qt could not be loaded: {error}":
+        "Lintask kann nicht starten, weil Qt nicht geladen werden konnte: {error}",
+    "Installed from Git: run ./install.sh again. Installed as a package: reinstall the package.":
+        "Aus Git installiert: ./install.sh erneut ausführen. Als Paket installiert: Paket neu installieren.",
 }

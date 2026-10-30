@@ -1,7 +1,10 @@
 """The .deb's behaviour when PySide6 can't be set up. The scripts run as temporary
 copies with a PATH of stubs only, so nothing here touches the real system.
 """
+import os
+import pty
 import re
+import shutil
 import stat
 import subprocess
 import tempfile
@@ -253,6 +256,124 @@ class TestControlFile(unittest.TestCase):
         for name in ("Provides", "Conflicts", "Replaces"):
             with self.subTest(name=name):
                 self.assertEqual(self.field(name), "wintaskmanager")
+
+
+class TestInstallScript(unittest.TestCase):
+    """install.sh with stubs for sudo, the package managers, Python and ldd."""
+    TOOLS = ("bash", "sh", "dirname", "rm", "mkdir", "sed", "chmod", "awk", "sort", "tail",
+             "cut", "cat", "cp")
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        self.stubs = self.root / "stubs"
+        self.stubs.mkdir()
+        self.app = self.root / "app"
+        self.app.mkdir()
+        self.home = self.root / "home"
+        self.home.mkdir()
+        for name in ("install.sh", "lintask.desktop.in", "requirements.txt"):
+            shutil.copy(REPO / name, self.app / name)
+        for tool in self.TOOLS:
+            (self.stubs / tool).symlink_to(shutil.which(tool))
+        plugins = self.root / "plugins" / "platforms"
+        plugins.mkdir(parents=True)
+        (plugins / "libqxcb.so").touch()
+        write_executable(self.stubs / "sudo", '#!/bin/sh\nexec "$@"\n')
+        write_executable(self.stubs / "python3", f"""#!/bin/sh
+case "$*" in
+    *QLibraryInfo*) echo {self.root}/plugins ;;
+    *sys.exit\\(PySide6*) exit 1 ;;
+    "-m venv "*) mkdir -p "$3/bin"; cp "$0" "$3/bin/python" ;;
+esac
+exit 0
+""")
+        self.set_ldd("")
+        self.manager_log = self.root / "manager.log"
+
+    def set_ldd(self, missing: str) -> None:
+        line = f'echo "\t{missing} => not found"\n' if missing else ""
+        write_executable(self.stubs / "ldd", f"#!/bin/sh\necho '\tlibc.so.6 => /lib/libc.so.6'\n{line}")
+
+    def add_manager(self, name: str, script: str = "exit 0") -> None:
+        write_executable(self.stubs / name,
+                         f'#!/bin/sh\necho "$@" >> {self.manager_log}\n{script}\n')
+
+    def install(self, stdin=subprocess.DEVNULL):
+        return subprocess.run(["bash", str(self.app / "install.sh")], stdin=stdin,
+                              capture_output=True, text=True,
+                              env={"PATH": str(self.stubs), "HOME": str(self.home), "LANG": "C"})
+
+    def desktop_files(self) -> list:
+        return list(self.home.glob(".local/share/applications/*.desktop"))
+
+    def test_complete_system_finishes(self):
+        self.add_manager("apt-get")
+        result = self.install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Installation finished", result.stdout)
+        self.assertEqual(len(self.desktop_files()), 1)
+
+    def test_missing_library_is_no_success(self):
+        self.add_manager("apt-get")
+        self.set_ldd("libxcb-cursor.so.0")
+        result = self.install()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("libxcb-cursor.so.0", result.stderr)
+        self.assertNotIn("Installation finished", result.stdout)
+        self.assertEqual(self.desktop_files(), [])
+
+    def test_qt_that_does_not_import_is_no_success(self):
+        self.add_manager("apt-get")
+        write_executable(self.stubs / "python3", """#!/bin/sh
+case "$*" in
+    *QLibraryInfo*) echo "ImportError: libEGL.so.1" >&2; exit 1 ;;
+    *sys.exit\\(PySide6*) exit 1 ;;
+    "-m venv "*) mkdir -p "$3/bin"; cp "$0" "$3/bin/python" ;;
+esac
+exit 0
+""")
+        result = self.install()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("libEGL.so.1", result.stderr)
+        self.assertEqual(self.desktop_files(), [])
+
+    def test_stale_arch_database_without_terminal_only_explains(self):
+        # Upgrading a whole system is not something to do without asking.
+        self.add_manager("pacman", "exit 1")
+        result = self.install()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("pacman -Syu", result.stderr)
+        self.assertNotIn("-Sy", self.manager_log.read_text())
+
+    def test_stale_arch_database_with_terminal_lets_pacman_ask(self):
+        self.add_manager("pacman", 'case "$1" in -Syu) exit 0 ;; *) exit 1 ;; esac')
+        master, slave = pty.openpty()
+        self.addCleanup(os.close, master)
+        self.addCleanup(os.close, slave)
+        result = self.install(stdin=slave)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        upgrade = [line for line in self.manager_log.read_text().splitlines()
+                   if line.startswith("-Syu")]
+        self.assertEqual(len(upgrade), 1)
+        self.assertNotIn("--noconfirm", upgrade[0])
+
+    def test_apt_list_covers_the_libraries_of_the_package(self):
+        text = (REPO / "install.sh").read_text()
+        required = re.search(r'PM="apt"\n\s*REQUIRED=\(([^)]*)\)', text).group(1).split()
+        control = (DEBIAN / "control.in").read_text()
+        depends = re.search(r"^Depends: (.*(?:\n .*)*)", control, re.MULTILINE).group(1)
+        for entry in depends.split(","):
+            names = [re.sub(r"\s*\(.*\)", "", name).strip() for name in entry.split("|")]
+            if names[0].startswith("lib"):
+                with self.subTest(entry=entry.strip()):
+                    self.assertTrue(set(names) & set(required))
+
+
+class TestArchPackage(unittest.TestCase):
+    def test_a_font_is_required(self):
+        self.assertIn("'ttf-font'", (REPO / "packaging" / "arch" / "PKGBUILD").read_text())
 
 
 class TestServerUnit(unittest.TestCase):
