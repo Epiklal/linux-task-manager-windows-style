@@ -1,0 +1,25 @@
+[Unit]
+Description=Lintask monitoring server (remote monitoring)
+Documentation=https://github.com/Epiklal/lintask
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Access token, port etc. are set in /etc/default/lintask-server.
+EnvironmentFile=-/etc/default/lintask-server
+# WINTASKMANAGER_SERVER_OPTS: the name before the rename, for a drop-in that still sets it.
+ExecStart=/usr/bin/lintask --server $LINTASK_SERVER_OPTS $WINTASKMANAGER_SERVER_OPTS
+Restart=on-failure
+RestartSec=5
+
+# Runs unprivileged and sandboxed. To let the server read SMART and memory data through
+# the task manager's sudo rule, enter a fixed user instead:
+#     sudo systemctl edit lintask-server
+#     [Service]
+#     DynamicUser=no
+#     User=yourname
+DynamicUser=yes
+
+[Install]
+WantedBy=multi-user.target

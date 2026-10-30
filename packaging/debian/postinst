@@ -1,16 +1,18 @@
 #!/bin/sh
 set -e
 
-UNIT=wintaskmanager-server.service
+UNIT=lintask-server.service
 
 case "${LANGUAGE:-${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}}" in
     de*)
         MSG_COMPILE="Warnung: Byte-Compile fehlgeschlagen - das Programm läuft trotzdem."
-        MSG_NEEDS_SETUP="Warnung: WinTaskManager ist installiert, startet aber erst nach:"
+        MSG_NEEDS_SETUP="Warnung: Lintask ist installiert, startet aber erst nach:"
+        MSG_MIGRATE="Warnung: Einstellungen von WinTaskManager konnten nicht vollständig übernommen werden."
         ;;
     *)
         MSG_COMPILE="Warning: byte-compiling failed - the program still runs."
-        MSG_NEEDS_SETUP="Warning: WinTaskManager is installed, but only starts after:"
+        MSG_NEEDS_SETUP="Warning: Lintask is installed, but only starts after:"
+        MSG_MIGRATE="Warning: settings from WinTaskManager could not be fully taken over."
         ;;
 esac
 
@@ -18,7 +20,7 @@ case "$1" in
     configure)
         # Byte-compile like dh_python3 (prerm removes the .pyc files again).
         if command -v py3compile >/dev/null 2>&1; then
-            py3compile -p wintaskmanager /usr/share/wintaskmanager \
+            py3compile -p lintask /usr/share/lintask \
                 || echo "$MSG_COMPILE" >&2
         fi
 
@@ -26,13 +28,19 @@ case "$1" in
         # Linux Mint have no PySide6 packages). If that fails, e.g. without internet,
         # configuration still finishes: a half-installed package would block apt for
         # the whole system. The launcher says what to do the next time it runs.
-        if ! /usr/libexec/wintaskmanager/setup-venv; then
+        if ! /usr/libexec/lintask/setup-venv; then
             echo "$MSG_NEEDS_SETUP" >&2
-            echo "    sudo /usr/libexec/wintaskmanager/setup-venv" >&2
+            echo "    sudo /usr/libexec/lintask/setup-venv" >&2
         fi
 
         if [ -d /run/systemd/system ]; then
             systemctl --system daemon-reload >/dev/null 2>&1 || true
+        fi
+        # First install: take over what the package's old name left behind. A failure
+        # must not block apt either; the old settings simply stay where they are.
+        if [ -z "$2" ] && [ -x /usr/libexec/lintask/migrate-wintaskmanager ]; then
+            /usr/libexec/lintask/migrate-wintaskmanager \
+                || echo "$MSG_MIGRATE" >&2
         fi
         # The service is not enabled automatically; a service the admin enabled stays
         # enabled across updates and is restarted.

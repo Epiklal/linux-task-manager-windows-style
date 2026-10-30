@@ -10,7 +10,8 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 DEBIAN = REPO / "packaging" / "debian"
-SETUP_VENV = "/usr/libexec/wintaskmanager/setup-venv"
+SETUP_VENV = "/usr/libexec/lintask/setup-venv"
+MIGRATE = "/usr/libexec/lintask/migrate-wintaskmanager"
 
 
 def write_executable(path: Path, content: str) -> None:
@@ -34,8 +35,8 @@ class ScriptTestCase(unittest.TestCase):
 class TestStarterWithoutPySide6(ScriptTestCase):
     def setUp(self):
         super().setUp()
-        text = ((DEBIAN / "wintaskmanager").read_text()
-                .replace("/opt/wintaskmanager/venv", f"{self.root}/missing")
+        text = ((DEBIAN / "lintask").read_text()
+                .replace("/opt/lintask/venv", f"{self.root}/missing")
                 .replace("/usr/bin/python3", f"{self.root}/missing/python3"))
         self.starter = self.root / "starter"
         self.starter.write_text(text)
@@ -79,14 +80,21 @@ class TestStarterWithoutPySide6(ScriptTestCase):
 
 
 class TestPostinst(ScriptTestCase):
-    def configure(self, setup_rc: int):
-        stub = self.root / "setup-venv"
-        write_executable(stub, f"#!/bin/sh\nexit {setup_rc}\n")
-        postinst = self.root / "postinst"
+    def postinst(self, setup_rc=0, migrate_rc=0) -> Path:
+        """postinst with stubs for the two helpers; the migration stub leaves a log."""
+        write_executable(self.root / "setup-venv", f"#!/bin/sh\nexit {setup_rc}\n")
+        write_executable(self.root / "migrate",
+                         f'#!/bin/sh\necho run >> "{self.root}/migrate.log"\nexit {migrate_rc}\n')
         text = (DEBIAN / "postinst").read_text()
         self.assertIn(SETUP_VENV, text)
-        postinst.write_text(text.replace(SETUP_VENV, str(stub)))
-        return self.run_script(postinst, "configure")
+        self.assertIn(MIGRATE, text)
+        path = self.root / "postinst"
+        path.write_text(text.replace(SETUP_VENV, f"{self.root}/setup-venv")
+                        .replace(MIGRATE, f"{self.root}/migrate"))
+        return path
+
+    def configure(self, setup_rc: int):
+        return self.run_script(self.postinst(setup_rc=setup_rc), "configure")
 
     def test_failed_download_does_not_leave_apt_blocked(self):
         result = self.configure(setup_rc=1)
@@ -94,17 +102,137 @@ class TestPostinst(ScriptTestCase):
         self.assertIn("Warning", result.stderr)
 
     def test_warning_follows_the_locale(self):
-        stub = self.root / "setup-venv-stub"
-        write_executable(stub, "#!/bin/sh\nexit 1\n")
-        postinst = self.root / "postinst"
-        postinst.write_text((DEBIAN / "postinst").read_text().replace(SETUP_VENV, str(stub)))
-        result = self.run_script(postinst, "configure", env={"LANG": "de_DE.UTF-8"})
+        result = self.run_script(self.postinst(setup_rc=1), "configure",
+                                 env={"LANG": "de_DE.UTF-8"})
         self.assertIn("Warnung", result.stderr)
 
     def test_successful_setup_is_silent(self):
         result = self.configure(setup_rc=0)
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stderr, "")
+
+    def test_first_install_takes_over_the_old_settings(self):
+        self.assertEqual(self.run_script(self.postinst(), "configure").returncode, 0)
+        self.assertEqual((self.root / "migrate.log").read_text(), "run\n")
+
+    def test_update_does_not_migrate_again(self):
+        self.assertEqual(self.run_script(self.postinst(), "configure", "1.0.0").returncode, 0)
+        self.assertFalse((self.root / "migrate.log").exists())
+
+    def test_failed_migration_does_not_leave_apt_blocked(self):
+        result = self.run_script(self.postinst(migrate_rc=1), "configure")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("WinTaskManager", result.stderr)
+
+
+class TestMigration(ScriptTestCase):
+    """migrate-wintaskmanager against a temporary root, with logging service tools."""
+
+    SUDO_RULE = ("alice ALL=(root) NOPASSWD: "
+                 "/usr/libexec/wintaskmanager/wintaskmanager-smartctl *\n")
+    OLD_WANTS = "etc/systemd/system/multi-user.target.wants/wintaskmanager-server.service"
+
+    def setUp(self):
+        super().setUp()
+        self.stubs = self.root / "stubs"
+        self.stubs.mkdir()
+        self.tree = self.root / "tree"
+        self.calls = self.root / "calls.log"
+        self.calls.touch()
+        for tool in ("deb-systemd-helper", "deb-systemd-invoke", "systemctl", "udevadm"):
+            write_executable(self.stubs / tool, f'#!/bin/sh\necho "{tool} $*" >> "{self.calls}"\n')
+        self.set_visudo(0)
+
+    def set_visudo(self, rc: int):
+        write_executable(self.stubs / "visudo", f"#!/bin/sh\nexit {rc}\n")
+
+    def put(self, relative: str, content: str = "") -> Path:
+        path = self.tree / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+        return path
+
+    def migrate(self, returncode=0):
+        result = self.run_script(DEBIAN / "migrate-wintaskmanager",
+                                 env={"LINTASK_MIGRATE_ROOT": str(self.tree),
+                                      "PATH": f"{self.stubs}:/usr/bin:/bin"})
+        self.assertEqual(result.returncode, returncode, result.stderr)
+        return self.calls.read_text().splitlines()
+
+    def test_fresh_install_is_a_silent_no_op(self):
+        result = self.run_script(DEBIAN / "migrate-wintaskmanager",
+                                 env={"LINTASK_MIGRATE_ROOT": str(self.tree),
+                                      "PATH": f"{self.stubs}:/usr/bin:/bin"})
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""))
+        self.assertEqual(self.calls.read_text(), "")
+
+    def test_server_options_replace_the_shipped_defaults(self):
+        old = self.put("etc/default/wintaskmanager-server",
+                       'WINTASKMANAGER_SERVER_OPTS="--token secret"\n')
+        old.chmod(0o600)
+        new = self.put("etc/default/lintask-server", "# shipped\n")
+        self.migrate()
+        self.assertEqual(new.read_text(), 'LINTASK_SERVER_OPTS="--token secret"\n')
+        self.assertEqual(stat.S_IMODE(new.stat().st_mode), 0o600)
+        self.assertFalse(old.exists())
+        self.assertEqual([p.name for p in new.parent.iterdir()], ["lintask-server"])
+
+    def test_drop_ins_move_along(self):
+        self.put("etc/systemd/system/wintaskmanager-server.service.d/port.conf", "[Service]\n")
+        self.migrate()
+        self.assertTrue((self.tree / "etc/systemd/system/lintask-server.service.d/port.conf").exists())
+        self.assertFalse((self.tree / "etc/systemd/system/wintaskmanager-server.service.d").exists())
+
+    def test_sudo_rule_follows_the_helper(self):
+        old = self.put("etc/sudoers.d/wintaskmanager-smartctl", self.SUDO_RULE)
+        self.migrate()
+        new = self.tree / "etc/sudoers.d/lintask-smartctl"
+        self.assertEqual(new.read_text(),
+                         "alice ALL=(root) NOPASSWD: /usr/libexec/lintask/lintask-smartctl *\n")
+        self.assertEqual(stat.S_IMODE(new.stat().st_mode), 0o440)
+        self.assertFalse(old.exists())
+
+    def test_sudo_rule_rejected_by_visudo_is_not_installed(self):
+        self.set_visudo(1)
+        old = self.put("etc/sudoers.d/wintaskmanager-smartctl", self.SUDO_RULE)
+        self.migrate()
+        self.assertEqual(list(old.parent.iterdir()), [])
+
+    def test_rule_of_a_git_checkout_stays(self):
+        text = "alice ALL=(root) NOPASSWD: /usr/local/libexec/wintaskmanager-smartctl *\n"
+        old = self.put("etc/sudoers.d/wintaskmanager-smartctl", text)
+        self.migrate()
+        self.assertEqual(old.read_text(), text)
+        self.assertEqual([p.name for p in old.parent.iterdir()], [old.name])
+
+    def test_rapl_rule_moves_along(self):
+        old = self.put("etc/udev/rules.d/99-wintaskmanager-rapl.rules", "rule\n")
+        calls = self.migrate()
+        self.assertEqual((old.parent / "99-lintask-rapl.rules").read_text(), "rule\n")
+        self.assertFalse(old.exists())
+        self.assertIn("udevadm control --reload", calls)
+
+    def test_enabled_server_stays_enabled_without_a_running_systemd(self):
+        self.put(self.OLD_WANTS).unlink()
+        (self.tree / self.OLD_WANTS).symlink_to("/usr/lib/systemd/system/x.service")
+        calls = self.migrate()
+        self.assertIn("deb-systemd-helper enable lintask-server.service", calls)
+        self.assertFalse([call for call in calls if call.startswith("deb-systemd-invoke")])
+
+    def test_enabled_server_is_started_on_a_running_systemd(self):
+        self.put(self.OLD_WANTS).unlink()
+        (self.tree / self.OLD_WANTS).symlink_to("/usr/lib/systemd/system/x.service")
+        (self.tree / "run/systemd/system").mkdir(parents=True)
+        calls = self.migrate()
+        self.assertIn("deb-systemd-invoke start lintask-server.service", calls)
+
+    def test_disabled_server_stays_disabled_and_the_old_mask_goes(self):
+        mask = self.tree / "etc/systemd/system/wintaskmanager-server.service"
+        mask.parent.mkdir(parents=True)
+        mask.symlink_to("/dev/null")
+        calls = self.migrate()
+        self.assertIn("deb-systemd-helper unmask wintaskmanager-server.service", calls)
+        self.assertFalse([call for call in calls if "lintask-server" in call])
 
 
 class TestControlFile(unittest.TestCase):
@@ -120,6 +248,18 @@ class TestControlFile(unittest.TestCase):
 
     def test_virtual_environment_can_be_created(self):
         self.assertIn("python3-venv", self.field("Depends"))
+
+    def test_package_replaces_its_old_name(self):
+        for name in ("Provides", "Conflicts", "Replaces"):
+            with self.subTest(name=name):
+                self.assertEqual(self.field(name), "wintaskmanager")
+
+
+class TestServerUnit(unittest.TestCase):
+    def test_options_under_the_old_name_keep_working(self):
+        unit = (DEBIAN / "lintask-server.service").read_text()
+        self.assertIn("$LINTASK_SERVER_OPTS", unit)
+        self.assertIn("$WINTASKMANAGER_SERVER_OPTS", unit)
 
 
 if __name__ == "__main__":

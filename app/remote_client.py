@@ -1,4 +1,4 @@
-"""Background client for the headless WinTaskManager server."""
+"""Background client for the headless Lintask server."""
 from __future__ import annotations
 
 import http.client

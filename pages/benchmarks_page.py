@@ -131,7 +131,7 @@ class BenchmarkWorker(StoppableWorker):
             raise ValueError(tr("No mounted disk target selected"))
         work_dir = _writable_dir_on(self._disk_directory)
         with tempfile.TemporaryDirectory(
-            prefix="wintaskmanager-benchmark-", dir=work_dir,
+            prefix="lintask-benchmark-", dir=work_dir,
         ) as temp_dir:
             output = self._run_command(
                 [

@@ -1,4 +1,4 @@
-# WinTaskManager
+# Lintask
 
 A native Linux system monitor that looks and feels like the Windows Task Manager.
 Choose the classic **Windows 10** look or the modern **Windows 11** look, pick a light,
@@ -18,6 +18,7 @@ English and German; it follows your system language and can be switched in the s
 - [Features at a glance](#features-at-a-glance)
 - [What gets installed](#what-gets-installed)
 - [Install, run, update, uninstall](#install)
+- [Upgrading from WinTaskManager](#upgrading-from-wintaskmanager)
 - [Debian package (.deb)](#debian-package-deb)
 - [Arch package (PKGBUILD)](#arch-package-pkgbuild)
 - [Feature guide (every tab)](#feature-guide)
@@ -119,21 +120,21 @@ installer needs an internet connection for this download.
 | Location | Content |
 | --- | --- |
 | `<project folder>/.venv/` | Virtual environment with the Python packages |
-| `~/.local/share/applications/wintaskmanager.desktop` | **Task Manager** entry in your application menu (**Task-Manager** on German systems) |
-| `~/.config/WinTaskManager/TaskManager.conf` | Your settings (created on first start, readable only by you) |
+| `~/.local/share/applications/lintask.desktop` | **Lintask** entry in your application menu |
+| `~/.config/Lintask/TaskManager.conf` | Your settings (created on first start, readable only by you) |
 
 Nothing else is changed on your system. The optional **Settings →
 Set up hardware data with sudo** button additionally installs a small read-only
-helper (`/usr/local/libexec/wintaskmanager-smartctl`) and a matching sudo rule
-(`/etc/sudoers.d/wintaskmanager-smartctl`) so SMART and RAM data can be read
+helper (`/usr/local/libexec/lintask-smartctl`) and a matching sudo rule
+(`/etc/sudoers.d/lintask-smartctl`) so SMART and RAM data can be read
 without typing your password every time. (The .deb already ships the helper as
-`/usr/libexec/wintaskmanager/wintaskmanager-smartctl` and the Arch package as
-`/usr/lib/wintaskmanager/wintaskmanager-smartctl`; the button then only adds
+`/usr/libexec/lintask/lintask-smartctl` and the Arch package as
+`/usr/lib/lintask/lintask-smartctl`; the button then only adds
 the sudo rule and the udev rule.) The helper can only run `smartctl` on
 block devices and `dmidecode -t memory`. It also makes the CPU energy counters
 (RAPL, `/sys/class/powercap/intel-rapl*:*/energy_uj`, on Intel and AMD) readable
 for your user group, right away and on every boot through a udev rule
-(`/etc/udev/rules.d/99-wintaskmanager-rapl.rules`, works with systemd-udevd and
+(`/etc/udev/rules.d/99-lintask-rapl.rules`, works with systemd-udevd and
 eudev). Since Linux 5.10 the kernel makes them readable only by root (because of
 the PLATYPUS side channel), so without this the CPU power draw (and on Intel the
 iGPU power draw) shows *Keine Leseberechtigung*. On NixOS `/etc` is read-only: the
@@ -150,21 +151,21 @@ be installed.
 On a server without a desktop, run the same setup manually from the project folder
 (after installing `smartmontools` and `dmidecode` with your package manager). With
 the .deb or the Arch package, skip the two `install` lines and write the packaged
-helper (`/usr/libexec/wintaskmanager/wintaskmanager-smartctl`, on Arch
-`/usr/lib/wintaskmanager/wintaskmanager-smartctl`) into the sudo rule instead:
+helper (`/usr/libexec/lintask/lintask-smartctl`, on Arch
+`/usr/lib/lintask/lintask-smartctl`) into the sudo rule instead:
 
 ```bash
 sudo install -d -m 0755 /usr/local/libexec
-sudo install -m 0755 scripts/wintaskmanager-smartctl /usr/local/libexec/wintaskmanager-smartctl
+sudo install -m 0755 scripts/lintask-smartctl /usr/local/libexec/lintask-smartctl
 tmp="$(mktemp)"
-echo "$USER ALL=(root) NOPASSWD: /usr/local/libexec/wintaskmanager-smartctl *" > "$tmp"
-sudo visudo -cf "$tmp" && sudo install -m 0440 -o root -g root "$tmp" /etc/sudoers.d/wintaskmanager-smartctl
+echo "$USER ALL=(root) NOPASSWD: /usr/local/libexec/lintask-smartctl *" > "$tmp"
+sudo visudo -cf "$tmp" && sudo install -m 0440 -o root -g root "$tmp" /etc/sudoers.d/lintask-smartctl
 rm -f "$tmp"
 # CPU power draw (RAPL) readable for your group, right away:
 sudo chgrp "$(id -gn)" /sys/class/powercap/intel-rapl*:*/energy_uj
 sudo chmod g+r /sys/class/powercap/intel-rapl*:*/energy_uj
 # ... and on every boot (not on NixOS, see above):
-echo "ACTION==\"add\", SUBSYSTEM==\"powercap\", KERNEL==\"intel-rapl*:*\", TEST==\"energy_uj\", RUN+=\"$(command -v chgrp) $(id -gn) /sys\$devpath/energy_uj\", RUN+=\"$(command -v chmod) g+r /sys\$devpath/energy_uj\"" | sudo tee /etc/udev/rules.d/99-wintaskmanager-rapl.rules
+echo "ACTION==\"add\", SUBSYSTEM==\"powercap\", KERNEL==\"intel-rapl*:*\", TEST==\"energy_uj\", RUN+=\"$(command -v chgrp) $(id -gn) /sys\$devpath/energy_uj\", RUN+=\"$(command -v chmod) g+r /sys\$devpath/energy_uj\"" | sudo tee /etc/udev/rules.d/99-lintask-rapl.rules
 sudo udevadm control --reload
 ```
 
@@ -178,7 +179,7 @@ for the services tab.
 The [Debian package](#debian-package-deb) runs on Debian 13, Ubuntu 24.04, Linux
 Mint 22 and newer. Debian 13 ships PySide6 6.8 as system packages, which the package
 uses directly. Ubuntu 24.04 and Linux Mint 22 have no PySide6 packages at all, so
-there the package downloads PySide6 from PyPI into `/opt/wintaskmanager/venv` while
+there the package downloads PySide6 from PyPI into `/opt/lintask/venv` while
 it is being installed (internet connection needed once). On Arch Linux and its
 derivatives (Manjaro, EndeavourOS, CachyOS, ...) the [Arch package](#arch-package-pkgbuild)
 uses the distribution's own `pyside6` and `python-psutil` packages, so nothing is
@@ -210,14 +211,14 @@ distribution, which is untested.
 
 On **Debian, Ubuntu, Linux Mint** and other `apt`-based systems, the easiest way is
 the [Debian package](#debian-package-deb) below: one `.deb` file from the
-[Releases page](https://github.com/Epiklal/linux-task-manager-windows-style/releases)
+[Releases page](https://github.com/Epiklal/lintask/releases)
 that installs the application together with everything it needs. On **Arch Linux**
 and its derivatives, build and install the [Arch package](#arch-package-pkgbuild)
 below with `makepkg -si`. On all other distributions, use the installer script:
 
 ```bash
-git clone https://github.com/Epiklal/linux-task-manager-windows-style.git
-cd linux-task-manager-windows-style
+git clone https://github.com/Epiklal/lintask.git
+cd lintask
 ./install.sh
 ```
 
@@ -235,15 +236,15 @@ Requirements: Debian 13, Ubuntu 24.04, Linux Mint 22 or newer, 64-bit (x86-64 or
 ARM64). On Ubuntu and Linux Mint the first installation also needs an internet
 connection (see [How PySide6 is provided](#how-pyside6-is-provided)).
 
-**Download:** the latest `wintaskmanager_<version>_all.deb` is on the
-[Releases page](https://github.com/Epiklal/linux-task-manager-windows-style/releases).
+**Download:** the latest `lintask_<version>_all.deb` is on the
+[Releases page](https://github.com/Epiklal/lintask/releases).
 Download it and either double-click it in your file manager (Linux Mint opens it in
 the package installer, which also installs the recommended tools) or install it from
 a terminal:
 
 ```bash
 cd ~/Downloads
-sudo apt install ./wintaskmanager_*.deb
+sudo apt install ./lintask_*.deb
 ```
 
 Do not use `dpkg -i` directly: it does not install the dependencies. If you did,
@@ -253,21 +254,21 @@ Do not use `dpkg -i` directly: it does not install the dependencies. If you did,
 internet connection):
 
 ```bash
-git clone https://github.com/Epiklal/linux-task-manager-windows-style.git
-cd linux-task-manager-windows-style
+git clone https://github.com/Epiklal/lintask.git
+cd lintask
 ./build-deb.sh
-sudo apt install ./dist/wintaskmanager_*.deb
+sudo apt install ./dist/lintask_*.deb
 ```
 
 `build-deb.sh` only needs `dpkg-deb` (package `dpkg`, part of every Debian-based
 system); no `debhelper`, no `venv`, no `pip`. It prints the name of the finished file,
-e.g. `dist/wintaskmanager_1.0.0+20261025.1459.g854e76c_all.deb` (the version contains
+e.g. `dist/lintask_1.0.0+20261025.1459.g854e76c_all.deb` (the version contains
 the build time and the Git commit; pass your own with `./build-deb.sh 1.2.3`). If
 `dist/` already holds older builds, install the file the script printed instead of
 using the `*` wildcard.
 
 The same `.deb` works on every supported distribution: copy it to any other machine
-and install it there with `sudo apt install ./wintaskmanager_*.deb`, or open it in
+and install it there with `sudo apt install ./lintask_*.deb`, or open it in
 your file manager. `apt` resolves the dependencies itself:
 
 - **Depends** (always installed): `python3`, `python3-venv`, `python3-psutil`,
@@ -286,41 +287,41 @@ your file manager. `apt` resolves the dependencies itself:
 Right after unpacking, the package checks whether PySide6 6.6 or later can be
 imported from the system packages:
 
-- **Debian 13 and newer:** yes - nothing else happens, `/opt/wintaskmanager` is not
+- **Debian 13 and newer:** yes - nothing else happens, `/opt/lintask` is not
   created.
 - **Ubuntu 24.04, Linux Mint 22:** these distributions ship no PySide6 packages, so
   `apt` silently skips those Recommends. The package then creates a virtual
-  environment in `/opt/wintaskmanager/venv` and installs `PySide6-Essentials` into it
+  environment in `/opt/lintask/venv` and installs `PySide6-Essentials` into it
   with `pip` from pypi.org (about 100 MB, a few minutes on a slow connection;
   `psutil` comes from the system package). Nothing is installed into the system
   Python.
 
 If the download fails (no internet, proxy, pypi.org unreachable), the installation
 still finishes, with a warning, so `apt` stays usable. The program can't start until
-you fix the cause and run `sudo /usr/libexec/wintaskmanager/setup-venv`; no
+you fix the cause and run `sudo /usr/libexec/lintask/setup-venv`; no
 reinstallation is needed. Until then, the launcher names that command in the terminal
 or, when started from the menu, in a dialog. The same applies to
 `apt install --no-install-recommends`, which only needs the download to succeed.
-The launcher `wintaskmanager` uses the virtual environment when it exists and the
+The launcher `lintask` uses the virtual environment when it exists and the
 system packages otherwise.
 
 The package installs:
 
 | Path | Content |
 | --- | --- |
-| `/usr/share/wintaskmanager/` | The application (`main.py`, `app/`, `pages/`, `widgets/`), byte-compiled on installation |
-| `/usr/bin/wintaskmanager` | Launcher; `wintaskmanager --server` starts the server mode |
-| `/usr/share/applications/wintaskmanager.desktop` | Menu entry **Task Manager** |
-| `/usr/libexec/wintaskmanager/wintaskmanager-smartctl` | Read-only helper for SMART and RAM data; **Set up hardware data with sudo** then only adds the sudo rule and the udev rule |
-| `/usr/libexec/wintaskmanager/setup-venv` | Sets up PySide6 (system packages or `/opt/wintaskmanager/venv`); runs automatically during installation |
-| `/opt/wintaskmanager/venv/` | Only on Ubuntu/Linux Mint: virtual environment with PySide6 from PyPI; removed together with the package |
-| `/usr/lib/systemd/system/wintaskmanager-server.service` | systemd service for the server mode, not enabled by default (see [Remote monitoring](#remote-monitoring-server-mode)) |
-| `/etc/default/wintaskmanager-server` | Options for that service, e.g. the token; readable by root only (mode 600) |
-| `/usr/share/doc/wintaskmanager/` | This README, changelog and copyright |
+| `/usr/share/lintask/` | The application (`main.py`, `app/`, `pages/`, `widgets/`), byte-compiled on installation |
+| `/usr/bin/lintask` | Launcher; `lintask --server` starts the server mode |
+| `/usr/share/applications/lintask.desktop` | Menu entry **Lintask** |
+| `/usr/libexec/lintask/lintask-smartctl` | Read-only helper for SMART and RAM data; **Set up hardware data with sudo** then only adds the sudo rule and the udev rule |
+| `/usr/libexec/lintask/setup-venv` | Sets up PySide6 (system packages or `/opt/lintask/venv`); runs automatically during installation |
+| `/opt/lintask/venv/` | Only on Ubuntu/Linux Mint: virtual environment with PySide6 from PyPI; removed together with the package |
+| `/usr/lib/systemd/system/lintask-server.service` | systemd service for the server mode, not enabled by default (see [Remote monitoring](#remote-monitoring-server-mode)) |
+| `/etc/default/lintask-server` | Options for that service, e.g. the token; readable by root only (mode 600) |
+| `/usr/share/doc/lintask/` | This README, changelog and copyright |
 
-Your settings stay in `~/.config/WinTaskManager/TaskManager.conf`, as with the
+Your settings stay in `~/.config/Lintask/TaskManager.conf`, as with the
 installer script. If you used `./install.sh` on the same machine before, remove its
-menu entry (`rm ~/.local/share/applications/wintaskmanager.desktop`) so that the menu
+menu entry (`rm ~/.local/share/applications/lintask.desktop`) so that the menu
 starts the packaged version.
 
 ### Arch package (PKGBUILD)
@@ -332,8 +333,8 @@ installs the finished package):
 
 ```bash
 sudo pacman -S --needed base-devel git
-git clone https://github.com/Epiklal/linux-task-manager-windows-style.git
-cd linux-task-manager-windows-style/packaging/arch
+git clone https://github.com/Epiklal/lintask.git
+cd lintask/packaging/arch
 makepkg -si
 ```
 
@@ -348,24 +349,24 @@ The installed layout matches the Debian package, with these differences:
 
 | Path | Content |
 | --- | --- |
-| `/usr/lib/wintaskmanager/wintaskmanager-smartctl` | Read-only helper for SMART and RAM data (the .deb uses `/usr/libexec/`); **Set up hardware data with sudo** then only adds the sudo rule and the udev rule |
-| `/usr/lib/systemd/system/wintaskmanager-server.service` | systemd service for the server mode, not enabled by default |
-| `/etc/default/wintaskmanager-server` | Options for that service, e.g. the token; readable by root only (mode 600), kept as a `.pacsave` file on removal |
-| `/usr/share/licenses/wintaskmanager/LICENSE` | Copyright information |
+| `/usr/lib/lintask/lintask-smartctl` | Read-only helper for SMART and RAM data (the .deb uses `/usr/libexec/`); **Set up hardware data with sudo** then only adds the sudo rule and the udev rule |
+| `/usr/lib/systemd/system/lintask-server.service` | systemd service for the server mode, not enabled by default |
+| `/etc/default/lintask-server` | Options for that service, e.g. the token; readable by root only (mode 600), kept as a `.pacsave` file on removal |
+| `/usr/share/licenses/lintask/LICENSE` | Copyright information |
 
-There is no `setup-venv` and no `/opt/wintaskmanager/venv`. The `.pkg.tar.zst` file
+There is no `setup-venv` and no `/opt/lintask/venv`. The `.pkg.tar.zst` file
 and the `pkg/` and `src/` directories that `makepkg` creates in `packaging/arch/`
 are ignored by git.
 
 ## Run
 
-Start **Task Manager** from your application menu. The entry sits in the *System*
+Start **Lintask** from your application menu. The entry sits in the *System*
 category (Cinnamon: *Administration* / *System Tools*); typing `task` or
-`wintaskmanager` into the menu search finds it. From a terminal, with the Debian
+`lintask` into the menu search finds it. From a terminal, with the Debian
 or Arch package:
 
 ```bash
-wintaskmanager
+lintask
 ```
 
 or from the project folder when installed with `./install.sh`:
@@ -377,26 +378,26 @@ or from the project folder when installed with `./install.sh`:
 If Qt needs an explicitly selected display backend:
 
 ```bash
-QT_QPA_PLATFORM=wayland ./run.sh      # or: QT_QPA_PLATFORM=wayland wintaskmanager
-QT_QPA_PLATFORM=xcb ./run.sh          # or: QT_QPA_PLATFORM=xcb wintaskmanager
+QT_QPA_PLATFORM=wayland ./run.sh      # or: QT_QPA_PLATFORM=wayland lintask
+QT_QPA_PLATFORM=xcb ./run.sh          # or: QT_QPA_PLATFORM=xcb lintask
 ```
 
 ## Update
 
 Debian package - download the new `.deb` from the
-[Releases page](https://github.com/Epiklal/linux-task-manager-windows-style/releases)
-and install it over the old one with `sudo apt install ./wintaskmanager_*.deb`, or
+[Releases page](https://github.com/Epiklal/lintask/releases)
+and install it over the old one with `sudo apt install ./lintask_*.deb`, or
 build it yourself (if `dist/` holds older builds too, install the file name the
 script prints):
 
 ```bash
-cd linux-task-manager-windows-style
+cd lintask
 git pull
 ./build-deb.sh
-sudo apt install ./dist/wintaskmanager_*.deb
+sudo apt install ./dist/lintask_*.deb
 ```
 
-An existing `/opt/wintaskmanager/venv` with a current PySide6 is kept, so an update
+An existing `/opt/lintask/venv` with a current PySide6 is kept, so an update
 normally needs no download.
 
 Arch package - pull the new sources and build the package again (raise `pkgrel` in
@@ -404,7 +405,7 @@ the `PKGBUILD` if the version number has not changed, otherwise `pacman` reports
 same version):
 
 ```bash
-cd linux-task-manager-windows-style
+cd lintask
 git pull
 cd packaging/arch
 makepkg -si
@@ -413,24 +414,56 @@ makepkg -si
 Installer script:
 
 ```bash
-cd linux-task-manager-windows-style
+cd lintask
 git pull
 ./install.sh
 ```
 
 Your settings are kept in both cases.
 
+## Upgrading from WinTaskManager
+
+Lintask was called WinTaskManager before. On the first start, your settings move from
+`~/.config/WinTaskManager/` to `~/.config/Lintask/`, including the server token. The
+command `wintaskmanager` keeps working as a link to `lintask`.
+
+Debian package - the new package replaces the old one:
+
+```bash
+sudo apt install ./lintask_*.deb
+sudo apt purge wintaskmanager      # clears what dpkg still remembers of the old package
+```
+
+`/etc/default/wintaskmanager-server`, systemd drop-ins, the sudo rule and the RAPL udev
+rule are taken over, and a server that was enabled stays enabled. On Ubuntu and Linux
+Mint, PySide6 is downloaded again, because removing the old package deletes
+`/opt/wintaskmanager`.
+
+Arch package - `makepkg -si` replaces the old package. Its removal disables the server
+and deletes the sudo rule and the RAPL udev rule, so afterwards:
+
+```bash
+sudo systemctl enable --now lintask-server.service   # only if you use the server
+```
+
+and run **Settings → Set up hardware data with sudo** again. A changed
+`/etc/default/wintaskmanager-server` is taken over from its `.pacsave` file.
+
+Installer script - `git pull` and `./install.sh` as usual; the old menu entry is removed.
+SMART and RAM data keep working with the old helper; the next run of **Set up hardware
+data with sudo** replaces it and its sudo rule.
+
 ## Uninstall
 
 Debian package:
 
 ```bash
-sudo apt purge wintaskmanager       # or "apt remove" to keep /etc/default/wintaskmanager-server
-sudo apt autoremove                 # drops the recommended tools if nothing else needs them
-rm -r ~/.config/WinTaskManager      # optional: your settings
+sudo apt purge lintask     # or "apt remove" to keep /etc/default/lintask-server
+sudo apt autoremove        # drops the recommended tools if nothing else needs them
+rm -r ~/.config/Lintask    # optional: your settings
 ```
 
-Both `remove` and `purge` delete `/opt/wintaskmanager` (the PySide6 virtual
+Both `remove` and `purge` delete `/opt/lintask` (the PySide6 virtual
 environment on Ubuntu/Linux Mint). `purge` also removes the server configuration, the
 sudo rule for the packaged helper and the RAPL udev rule; the service is stopped and
 disabled automatically.
@@ -438,20 +471,20 @@ disabled automatically.
 Arch package:
 
 ```bash
-sudo pacman -R wintaskmanager         # or "pacman -Rs" to drop unneeded dependencies too
-rm -r ~/.config/WinTaskManager        # optional: your settings
+sudo pacman -R lintask     # or "pacman -Rs" to drop unneeded dependencies too
+rm -r ~/.config/Lintask    # optional: your settings
 ```
 
 This also stops and disables the service and removes the sudo rule for the packaged
 helper and the RAPL udev rule. The server configuration is kept as
-`/etc/default/wintaskmanager-server.pacsave` if you changed it.
+`/etc/default/lintask-server.pacsave` if you changed it.
 
 Installer script:
 
 ```bash
-rm ~/.local/share/applications/wintaskmanager.desktop
-rm -r ~/.config/WinTaskManager
-rm -r linux-task-manager-windows-style      # the project folder, including .venv
+rm ~/.local/share/applications/lintask.desktop
+rm -r ~/.config/Lintask
+rm -r lintask      # the project folder, including .venv
 ```
 
 If you used **Set up hardware data with sudo** with the installer script, also
@@ -459,15 +492,15 @@ remove the helper, its sudo rule and the RAPL udev rule (with the .deb or the Ar
 package the helper belongs to the package and is removed with it):
 
 ```bash
-sudo rm /etc/sudoers.d/wintaskmanager-smartctl /usr/local/libexec/wintaskmanager-smartctl
-sudo rm /etc/udev/rules.d/99-wintaskmanager-rapl.rules
+sudo rm /etc/sudoers.d/lintask-smartctl /usr/local/libexec/lintask-smartctl
+sudo rm /etc/udev/rules.d/99-lintask-rapl.rules
 ```
 
 If you set up the server as a systemd service (see below), stop and remove it too:
 
 ```bash
-sudo systemctl disable --now wintaskmanager-server
-sudo rm /etc/systemd/system/wintaskmanager-server.service
+sudo systemctl disable --now lintask-server
+sudo rm /etc/systemd/system/lintask-server.service
 ```
 
 The system packages from the table above stay installed; remove them with your
@@ -621,9 +654,9 @@ server, NAS or VM.
 ### 1. Install on the server
 
 Install exactly as on the desktop: on Debian/Ubuntu/Mint download the `.deb` from
-the [Releases page](https://github.com/Epiklal/linux-task-manager-windows-style/releases)
+the [Releases page](https://github.com/Epiklal/lintask/releases)
 (or build it on any machine with `./build-deb.sh`), copy it to the server and run
-`sudo apt install ./wintaskmanager_*.deb`; on Arch clone the repository and build
+`sudo apt install ./lintask_*.deb`; on Arch clone the repository and build
 the package (`cd packaging/arch && makepkg -si`); on other distributions clone the
 repository and run `./install.sh`. No desktop environment is
 needed, but PySide6 is: the server mode uses the same data-collection code as the
@@ -633,14 +666,14 @@ even on a headless server.
 ### 2. Start the server
 
 ```bash
-wintaskmanager --server      # Debian package
+lintask --server      # Debian package
 ./run.sh --server            # installer script, from the project folder
 ```
 
 Example output:
 
 ```text
-WinTaskManager server running on http://192.168.1.20:8765
+Lintask server running on http://192.168.1.20:8765
 Access token: 3f1Vw0...kQ
 Press Ctrl+C to quit
 ```
@@ -681,24 +714,24 @@ Create a fixed token once:
 python3 -c "import secrets; print(secrets.token_urlsafe(24))"
 ```
 
-**Debian or Arch package:** the service `wintaskmanager-server` is already installed
-but not enabled. Put the token into `/etc/default/wintaskmanager-server` (readable by root
+**Debian or Arch package:** the service `lintask-server` is already installed
+but not enabled. Put the token into `/etc/default/lintask-server` (readable by root
 only) and enable the service:
 
 ```bash
-sudoedit /etc/default/wintaskmanager-server     # WINTASKMANAGER_SERVER_OPTS="--token YOUR_TOKEN"
-sudo systemctl enable --now wintaskmanager-server
-systemctl status wintaskmanager-server
+sudoedit /etc/default/lintask-server     # LINTASK_SERVER_OPTS="--token YOUR_TOKEN"
+sudo systemctl enable --now lintask-server
+systemctl status lintask-server
 ```
 
 Without a token in that file, a new one is generated on every start and written to
-the journal (`journalctl -u wintaskmanager-server`). The service runs as a dynamic
+the journal (`journalctl -u lintask-server`). The service runs as a dynamic
 system user, which is enough for processes, CPU, memory, disks, network and sensors.
 For SMART and RAM details (sudo helper), the Docker tab and the disk benchmark, run it
 as a real user instead:
 
 ```bash
-sudo systemctl edit wintaskmanager-server
+sudo systemctl edit lintask-server
 ```
 
 ```ini
@@ -707,21 +740,21 @@ DynamicUser=no
 User=youruser
 ```
 
-then restart it with `sudo systemctl restart wintaskmanager-server` and set up the
+then restart it with `sudo systemctl restart lintask-server` and set up the
 helper and sudo rule for that user (see the end of this section).
 
-**Installer script:** create `/etc/systemd/system/wintaskmanager-server.service`
+**Installer script:** create `/etc/systemd/system/lintask-server.service`
 (adjust the path, user and token):
 
 ```ini
 [Unit]
-Description=WinTaskManager monitoring server
+Description=Lintask monitoring server
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 User=youruser
-ExecStart=/home/youruser/linux-task-manager-windows-style/run.sh --server --token YOUR_TOKEN
+ExecStart=/home/youruser/lintask/run.sh --server --token YOUR_TOKEN
 Restart=on-failure
 
 [Install]
@@ -732,9 +765,9 @@ Because the file contains the token, make it readable by root only and start the
 service:
 
 ```bash
-sudo chmod 600 /etc/systemd/system/wintaskmanager-server.service
+sudo chmod 600 /etc/systemd/system/lintask-server.service
 sudo systemctl daemon-reload
-sudo systemctl enable --now wintaskmanager-server
+sudo systemctl enable --now lintask-server
 ```
 
 For SMART and RAM details on the server, set up the helper and sudo rule once with

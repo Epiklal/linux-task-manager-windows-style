@@ -7,7 +7,8 @@ export PIP_DISABLE_PIP_VERSION_CHECK=1
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="$APP_DIR/.venv"
 DESKTOP_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
-DESKTOP_FILE="$DESKTOP_DIR/wintaskmanager.desktop"
+DESKTOP_FILE="$DESKTOP_DIR/lintask.desktop"
+LEGACY_DESKTOP_FILE="$DESKTOP_DIR/wintaskmanager.desktop"
 
 # Any failing command ends the script (set -e); say where and why instead of
 # dying silently in the middle of a download.
@@ -150,8 +151,10 @@ chmod +x "$APP_DIR/install.sh" "$APP_DIR/run.sh" 2>/dev/null || true
 mkdir -p "$DESKTOP_DIR"
 escaped_app_dir=${APP_DIR//\\/\\\\}
 escaped_app_dir=${escaped_app_dir//&/\\&}
-sed "s|@APP_DIR@|$escaped_app_dir|g" "$APP_DIR/wintaskmanager.desktop.in" > "$DESKTOP_FILE"
+sed "s|@APP_DIR@|$escaped_app_dir|g" "$APP_DIR/lintask.desktop.in" > "$DESKTOP_FILE"
 chmod 644 "$DESKTOP_FILE"
+# The entry an install from before the rename created; two menu entries otherwise.
+rm -f "$LEGACY_DESKTOP_FILE"
 
 echo
 echo "Installation finished."
@@ -160,4 +163,4 @@ if (( ${#MISSING_OPTIONAL[@]} )); then
     echo "Not available (optional, the related values/benchmarks will be missing): ${MISSING_OPTIONAL[*]}"
 fi
 echo "Start in a terminal: $APP_DIR/run.sh"
-echo "Application menu entry: Task Manager"
+echo "Application menu entry: Lintask"

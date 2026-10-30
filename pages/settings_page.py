@@ -271,7 +271,7 @@ class SettingsPage(QWidget):
         if not shutil.which("sudo"):
             self.smart_status.setText(tr("sudo is not installed - the setup needs sudo."))
             return
-        helper_source = Path(__file__).resolve().parents[1] / "scripts" / "wintaskmanager-smartctl"
+        helper_source = Path(__file__).resolve().parents[1] / "scripts" / "lintask-smartctl"
         group = grp.getgrgid(os.getgid()).gr_name
         script = setup_script(str(helper_source), getpass.getuser(), group)
         command = terminal_command(script)

@@ -199,7 +199,7 @@ def run_server(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT,
     MonitoringHandler.token = token
     server = ThreadingHTTPServer((host, port), MonitoringHandler)
     display_host = host if host not in ("0.0.0.0", "::") else _local_ip()
-    print(tr("WinTaskManager server running on http://{host}:{port}", host=display_host, port=port), flush=True)
+    print(tr("Lintask server running on http://{host}:{port}", host=display_host, port=port), flush=True)
     if token:
         print(tr("Access token: {token}", token=token), flush=True)
     else:
@@ -225,7 +225,7 @@ def _local_ip() -> str:
 
 
 def server_from_args(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description=tr("WinTaskManager monitoring server"))
+    parser = argparse.ArgumentParser(description=tr("Lintask monitoring server"))
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--token", help=tr("Your own bearer token (otherwise one is generated)"))

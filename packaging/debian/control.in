@@ -1,4 +1,4 @@
-Package: wintaskmanager
+Package: lintask
 Version: @VERSION@
 Section: utils
 Priority: optional
@@ -8,19 +8,22 @@ Installed-Size: @INSTALLED_SIZE@
 Depends: python3 (>= 3.9), python3-venv, python3-psutil, libxcb-cursor0, libxkbcommon-x11-0, libxcb-icccm4, libxcb-image0, libxcb-keysyms1, libxcb-randr0, libxcb-render-util0, libxcb-shape0, libxcb-sync1, libxcb-xfixes0, libxcb-xinerama0, libxcb-xkb1, libxcb-util1, libegl1, libgl1, libopengl0, libfontconfig1, libfreetype6, libdbus-1-3, libxrender1, libxi6, libsm6, libice6, libglib2.0-0t64 | libglib2.0-0
 Recommends: python3-pyside6.qtcore (>= 6.6), python3-pyside6.qtgui (>= 6.6), python3-pyside6.qtwidgets (>= 6.6), qt6-svg-plugins, libwayland-client0, libwayland-cursor0, libwayland-egl1, smartmontools, dmidecode, lm-sensors, pciutils, sudo, sysbench, fio, glmark2-x11 | glmark2, qt6-wayland
 Suggests: docker.io, nvidia-smi
-Homepage: https://github.com/Epiklal/linux-task-manager-windows-style
-Description: Windows-style task manager for Linux
+Provides: wintaskmanager
+Conflicts: wintaskmanager
+Replaces: wintaskmanager
+Homepage: https://github.com/Epiklal/lintask
+Description: Task manager for Linux
  Graphical task manager with the look of Windows 10/11 (Qt 6 / PySide6):
  processes, performance (CPU, memory, disks, network, GPU), autostart,
  services, benchmarks, Docker containers and remote monitoring of other
  machines. The interface is available in German and English.
  .
- The package installs the program to /usr/share/wintaskmanager, the
- "wintaskmanager" launcher, a menu entry, the helper for SMART and
- memory data and a (disabled) systemd service "wintaskmanager-server"
+ The package installs the program to /usr/share/lintask, the
+ "lintask" launcher, a menu entry, the helper for SMART and
+ memory data and a (disabled) systemd service "lintask-server"
  for the remote monitoring server mode.
  .
  PySide6 comes from the system packages (Debian). Where there are none
  (Ubuntu, Linux Mint), the installation creates a virtual environment in
- /opt/wintaskmanager/venv and downloads PySide6 from pypi.org - this
+ /opt/lintask/venv and downloads PySide6 from pypi.org - this
  needs an Internet connection once.

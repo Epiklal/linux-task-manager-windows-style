@@ -19,12 +19,16 @@ from app.i18n import tr
 # the Arch package (packaging/arch/PKGBUILD) under /usr/lib. Packages stay out of
 # /usr/local, so the manual setup uses a different path.
 PACKAGED_HELPERS = (
-    "/usr/libexec/wintaskmanager/wintaskmanager-smartctl",
-    "/usr/lib/wintaskmanager/wintaskmanager-smartctl",
+    "/usr/libexec/lintask/lintask-smartctl",
+    "/usr/lib/lintask/lintask-smartctl",
 )
-HELPER_TARGET = "/usr/local/libexec/wintaskmanager-smartctl"
-SUDOERS_TARGET = "/etc/sudoers.d/wintaskmanager-smartctl"
-RAPL_UDEV_TARGET = "/etc/udev/rules.d/99-wintaskmanager-rapl.rules"
+HELPER_TARGET = "/usr/local/libexec/lintask-smartctl"
+SUDOERS_TARGET = "/etc/sudoers.d/lintask-smartctl"
+RAPL_UDEV_TARGET = "/etc/udev/rules.d/99-lintask-rapl.rules"
+# Set up before the rename. Its sudo rule keeps working until the setup runs again.
+LEGACY_HELPER = "/usr/local/libexec/wintaskmanager-smartctl"
+LEGACY_SUDOERS = "/etc/sudoers.d/wintaskmanager-smartctl"
+LEGACY_RAPL_UDEV = "/etc/udev/rules.d/99-wintaskmanager-rapl.rules"
 # intel-rapl (MSR), intel-rapl-mmio and intel-rapl-tpmi zones, also on AMD.
 RAPL_ENERGY_GLOB = "/sys/class/powercap/intel-rapl*:*/energy_uj"
 # udev runs RUN+= programs without a PATH, so they need absolute paths. Only system
@@ -57,13 +61,22 @@ _TERMINALS = [
 ]
 
 
-def helper_path() -> str:
-    """The privileged helper to run via sudo: the packaged one if installed, otherwise
+def _setup_helper() -> str:
+    """The helper the sudo rule is written for: the packaged one if installed, otherwise
     the one the in-app setup copies to /usr/local."""
     for candidate in PACKAGED_HELPERS:
         if os.access(candidate, os.X_OK):
             return candidate
     return HELPER_TARGET
+
+
+def helper_path() -> str:
+    """The privileged helper to run via sudo. A setup from before the rename keeps
+    working until the setup runs again."""
+    helper = _setup_helper()
+    if not os.access(helper, os.X_OK) and os.access(LEGACY_HELPER, os.X_OK):
+        return LEGACY_HELPER
+    return helper
 
 
 def package_install_command() -> str | None:
@@ -120,6 +133,7 @@ def _rapl_steps(group: str) -> list[str]:
         "    else",
         f"        printf '%s\\n' {shlex.quote(rule)} > \"$tmp\"",
         f'        if sudo install -m 0644 -o root -g root "$tmp" {RAPL_UDEV_TARGET}; then',
+        f"            sudo rm -f {LEGACY_RAPL_UDEV}",
         "            sudo udevadm control --reload 2>/dev/null",
         "            " + _echo("Done: the CPU power draw can now be read."),
         "        else",
@@ -135,7 +149,7 @@ def _rapl_steps(group: str) -> list[str]:
 def setup_script(helper_source: str, username: str, group: str) -> str:
     """Bash script for the setup. The sudo rule is syntax-checked *before* it is
     installed, so a broken rule can never lock the user out of sudo."""
-    helper = helper_path()
+    helper = _setup_helper()
     rule = f"{username} ALL=(root) NOPASSWD: {helper} *"
     if helper in PACKAGED_HELPERS:
         # The distribution package already ships the helper - only the sudo rule is missing.
@@ -153,13 +167,14 @@ def setup_script(helper_source: str, username: str, group: str) -> str:
         packages_step = _echo("Unknown package manager: please install smartmontools "
                               "and dmidecode yourself.")
     return "\n".join([
-        _echo("== WinTaskManager: setting up hardware data =="),
+        _echo("== Lintask: setting up hardware data =="),
         packages_step,
         'tmp="$(mktemp)"',
         f"printf '%s\\n' {shlex.quote(rule)} > \"$tmp\"",
         f"if {helper_step}"
         ' && sudo visudo -cf "$tmp"'
         f' && sudo install -m 0440 -o root -g root "$tmp" {SUDOERS_TARGET}; then',
+        f"    sudo rm -f {LEGACY_SUDOERS} {LEGACY_HELPER}",
         "    echo; " + _echo("Done: SMART and memory data can now be read."),
         "else",
         "    echo; " + _echo("Setup failed - no sudo rule was installed."),

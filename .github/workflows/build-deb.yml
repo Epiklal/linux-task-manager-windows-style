@@ -38,40 +38,41 @@ jobs:
           dpkg-deb --info dist/*.deb
 
       # Like Linux Mint, ubuntu-latest has no PySide6 system packages: this also
-      # tests the route through /opt/wintaskmanager/venv (download from PyPI).
+      # tests the route through /opt/lintask/venv (download from PyPI).
       - name: Install package (smoke test)
         run: |
           sudo apt-get install -y ./dist/*.deb
-          test -x /usr/bin/wintaskmanager
-          test -f /usr/lib/systemd/system/wintaskmanager-server.service
+          test -x /usr/bin/lintask
+          test -f /usr/lib/systemd/system/lintask-server.service
+          test -L /usr/bin/wintaskmanager
 
       - name: Start the application headless
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
-          wintaskmanager --server --help
+          lintask --server --help
           set +e
-          timeout -s KILL 20 wintaskmanager
+          timeout -s KILL 20 lintask
           rc=$?
           set -e
           # 137 = still running after 20 s (ended by timeout), anything else = crash
-          test "$rc" -eq 137 || { echo "wintaskmanager exited with code $rc"; exit 1; }
+          test "$rc" -eq 137 || { echo "lintask exited with code $rc"; exit 1; }
 
       - name: Run unit tests
         env:
           QT_QPA_PLATFORM: offscreen
-        run: /opt/wintaskmanager/venv/bin/python -m unittest discover -s tests -t .
+        run: /opt/lintask/venv/bin/python -m unittest discover -s tests -t .
 
       - name: Remove package again
         run: |
-          sudo apt-get purge -y wintaskmanager
-          test ! -e /opt/wintaskmanager
-          test ! -e /usr/share/wintaskmanager
+          sudo apt-get purge -y lintask
+          test ! -e /opt/lintask
+          test ! -e /usr/share/lintask
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: wintaskmanager-deb
+          name: lintask-deb
           path: dist/*.deb
           if-no-files-found: error
 
@@ -84,5 +85,5 @@ jobs:
             gh release upload "$GITHUB_REF_NAME" dist/*.deb --clobber
           else
             gh release create "$GITHUB_REF_NAME" dist/*.deb \
-              --title "WinTaskManager $GITHUB_REF_NAME" --generate-notes
+              --title "Lintask $GITHUB_REF_NAME" --generate-notes
           fi

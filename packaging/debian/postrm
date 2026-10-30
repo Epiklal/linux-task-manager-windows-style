@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-UNIT=wintaskmanager-server.service
+UNIT=lintask-server.service
 
 if [ -d /run/systemd/system ]; then
     systemctl --system daemon-reload >/dev/null 2>&1 || true
@@ -13,11 +13,11 @@ case "$1" in
             deb-systemd-helper mask "$UNIT" >/dev/null || true
         fi
         # Leftovers in case the package was removed without py3clean.
-        find /usr/share/wintaskmanager -depth -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
-        rmdir -p /usr/share/wintaskmanager/app /usr/share/wintaskmanager/pages \
-                 /usr/share/wintaskmanager/widgets 2>/dev/null || true
+        find /usr/share/lintask -depth -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+        rmdir -p /usr/share/lintask/app /usr/share/lintask/pages \
+                 /usr/share/lintask/widgets 2>/dev/null || true
         # The virtual environment created by setup-venv (recreated when needed).
-        rm -rf /opt/wintaskmanager
+        rm -rf /opt/lintask
         ;;
     purge)
         if command -v deb-systemd-helper >/dev/null 2>&1; then
@@ -26,12 +26,12 @@ case "$1" in
         fi
         # Only the sudo rule pointing at the packaged helper; a rule for the Git
         # checkout (/usr/local) belongs to the user.
-        if [ -f /etc/sudoers.d/wintaskmanager-smartctl ] \
-            && grep -q '/usr/libexec/wintaskmanager/' /etc/sudoers.d/wintaskmanager-smartctl; then
-            rm -f /etc/sudoers.d/wintaskmanager-smartctl
+        if [ -f /etc/sudoers.d/lintask-smartctl ] \
+            && grep -q '/usr/libexec/lintask/' /etc/sudoers.d/lintask-smartctl; then
+            rm -f /etc/sudoers.d/lintask-smartctl
         fi
-        rm -f /etc/udev/rules.d/99-wintaskmanager-rapl.rules
-        rm -rf /usr/share/wintaskmanager /opt/wintaskmanager
+        rm -f /etc/udev/rules.d/99-lintask-rapl.rules
+        rm -rf /usr/share/lintask /opt/lintask
         ;;
 esac
 

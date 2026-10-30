@@ -1,6 +1,6 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
-Upstream-Name: WinTaskManager
-Source: https://github.com/Epiklal/linux-task-manager-windows-style
+Upstream-Name: Lintask
+Source: https://github.com/Epiklal/lintask
 
 Files: *
 Copyright: ketchupboy

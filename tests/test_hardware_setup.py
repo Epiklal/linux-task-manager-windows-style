@@ -11,11 +11,14 @@ from pathlib import Path
 from unittest import mock
 
 from app import hardware_setup
-from app.hardware_setup import HELPER_TARGET, PACKAGED_HELPERS, RAPL_UDEV_TARGET, SUDOERS_TARGET
+from app.hardware_setup import (
+    HELPER_TARGET, LEGACY_HELPER, LEGACY_RAPL_UDEV, LEGACY_SUDOERS, PACKAGED_HELPERS,
+    RAPL_UDEV_TARGET, SUDOERS_TARGET,
+)
 from app.i18n import language_override
 
 REPO = Path(__file__).resolve().parents[1]
-HELPER = REPO / "scripts" / "wintaskmanager-smartctl"
+HELPER = REPO / "scripts" / "lintask-smartctl"
 FAKE_SUDO = """#!/bin/sh
 echo "$*" >> "$LOG_DIR/sudo.log"
 if [ "$1" = visudo ]; then
@@ -39,7 +42,7 @@ def block_device() -> str | None:
 
 class TestSudoRule(unittest.TestCase):
     def script(self, helper=HELPER_TARGET, source="/src/helper", user="alice", group="alice"):
-        with mock.patch.object(hardware_setup, "helper_path", return_value=helper):
+        with mock.patch.object(hardware_setup, "_setup_helper", return_value=helper):
             return hardware_setup.setup_script(source, user, group)
 
     def test_rule_allows_only_the_helper(self):
@@ -75,7 +78,7 @@ class TestSetupScriptRun(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         root = Path(directory.name)
         write_executable(root / "sudo", FAKE_SUDO)
-        with (mock.patch.object(hardware_setup, "helper_path", return_value=HELPER_TARGET),
+        with (mock.patch.object(hardware_setup, "_setup_helper", return_value=HELPER_TARGET),
               language_override(language)):
             script = hardware_setup.setup_script(str(HELPER), "alice", "alice")
         result = subprocess.run(
@@ -102,6 +105,41 @@ class TestSetupScriptRun(unittest.TestCase):
         self.assertIn("no sudo rule was installed", result.stdout)
         self.assertFalse(any(SUDOERS_TARGET in call for call in sudo_calls))
 
+    def test_setup_replaces_the_rule_from_before_the_rename(self):
+        _, sudo_calls, _ = self.run_script()
+        self.assertIn(f"rm -f {LEGACY_SUDOERS} {LEGACY_HELPER}", sudo_calls)
+
+    def test_rejected_rule_keeps_the_one_from_before_the_rename(self):
+        _, sudo_calls, _ = self.run_script(visudo_rc=1)
+        self.assertFalse(any(LEGACY_SUDOERS in call for call in sudo_calls))
+
+
+class TestHelperPath(unittest.TestCase):
+    def path_with_executables(self, *executables):
+        with mock.patch.object(hardware_setup.os, "access",
+                               side_effect=lambda path, _mode: path in executables):
+            return hardware_setup.helper_path()
+
+    def test_packaged_helper_comes_first(self):
+        self.assertEqual(self.path_with_executables(PACKAGED_HELPERS[0], LEGACY_HELPER),
+                         PACKAGED_HELPERS[0])
+
+    def test_new_helper_comes_before_the_old_one(self):
+        self.assertEqual(self.path_with_executables(HELPER_TARGET, LEGACY_HELPER), HELPER_TARGET)
+
+    def test_setup_from_before_the_rename_keeps_working(self):
+        self.assertEqual(self.path_with_executables(LEGACY_HELPER), LEGACY_HELPER)
+
+    def test_without_any_helper_the_setup_target_is_named(self):
+        self.assertEqual(self.path_with_executables(), HELPER_TARGET)
+
+    def test_setup_never_writes_a_rule_for_the_old_helper(self):
+        with mock.patch.object(hardware_setup.os, "access",
+                               side_effect=lambda path, _mode: path == LEGACY_HELPER):
+            script = hardware_setup.setup_script("/src/helper", "alice", "alice")
+        self.assertIn(f"NOPASSWD: {HELPER_TARGET} *", script)
+        self.assertNotIn(f"NOPASSWD: {LEGACY_HELPER}", script)
+
 
 class TestRaplRule(unittest.TestCase):
     def test_rule_uses_absolute_paths_and_read_only_access(self):
@@ -113,6 +151,11 @@ class TestRaplRule(unittest.TestCase):
 
     def test_rule_target_is_a_udev_rule(self):
         self.assertTrue(RAPL_UDEV_TARGET.startswith("/etc/udev/rules.d/"))
+
+    def test_old_rule_goes_only_after_the_new_one_is_installed(self):
+        steps = hardware_setup._rapl_steps("alice")
+        install = next(i for i, step in enumerate(steps) if f"{RAPL_UDEV_TARGET}; then" in step)
+        self.assertEqual(steps[install + 1].strip(), f"sudo rm -f {LEGACY_RAPL_UDEV}")
 
 
 class TestHelperScript(unittest.TestCase):

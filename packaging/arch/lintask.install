@@ -1,0 +1,42 @@
+# Install hooks of the Arch package (pacman runs them after unpacking).
+
+post_install() {
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    cat <<'MSG'
+==> Lintask: start it from the application menu or run  lintask  in a terminal.
+==> Remote monitoring (optional):  sudo systemctl enable --now lintask-server
+    Access token and port: /etc/default/lintask-server
+MSG
+    # Replacing the wintaskmanager package: pacman saved a modified config as .pacsave,
+    # and the old package's hooks disabled the service and removed the setup rules.
+    local old=/etc/default/wintaskmanager-server.pacsave
+    if [ -f "$old" ]; then
+        sed -e 's/WINTASKMANAGER/LINTASK/g; s/WinTaskManager/Lintask/g; s/wintaskmanager/lintask/g' \
+            "$old" > /etc/default/lintask-server \
+            && chmod 600 /etc/default/lintask-server \
+            && rm -f "$old"
+        echo "==> Your WinTaskManager server settings were moved to /etc/default/lintask-server."
+        echo "    If the server was enabled before:  sudo systemctl enable --now lintask-server"
+    fi
+}
+
+post_upgrade() {
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl try-restart lintask-server.service >/dev/null 2>&1 || true
+}
+
+pre_remove() {
+    systemctl disable --now lintask-server.service >/dev/null 2>&1 || true
+}
+
+post_remove() {
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    # Also remove what the app set up (sudo rule for the helper, udev rule).
+    if grep -qs '/usr/lib/lintask/' /etc/sudoers.d/lintask-smartctl; then
+        rm -f /etc/sudoers.d/lintask-smartctl
+    fi
+    rm -f /etc/udev/rules.d/99-lintask-rapl.rules
+    # Leftovers such as __pycache__ from runs as root.
+    rm -rf /usr/share/lintask
+    rmdir /usr/lib/lintask 2>/dev/null || true
+}

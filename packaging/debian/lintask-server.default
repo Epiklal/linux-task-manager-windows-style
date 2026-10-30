@@ -1,0 +1,15 @@
+# Settings for the Lintask server (systemd service "lintask-server").
+# Enable and start:      sudo systemctl enable --now lintask-server
+# After changes here:    sudo systemctl restart lintask-server
+#
+# Available options (all optional):
+#   --token TOKEN       fixed access token that the desktop app enters when connecting.
+#                       Without --token a new token is generated at every start and
+#                       written to the journal:  journalctl -u lintask-server
+#   --port 8765         port (default 8765)
+#   --host 0.0.0.0      address to listen on (default: all)
+#   --no-auth           no access token - only on trusted networks!
+#
+# Example:
+#LINTASK_SERVER_OPTS="--token PLEASE-CHANGE --port 8765"
+LINTASK_SERVER_OPTS=""

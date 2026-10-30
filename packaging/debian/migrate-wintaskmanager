@@ -1,0 +1,97 @@
+#!/bin/sh
+# Takes over what a removed WinTaskManager package (the old name of Lintask) left
+# behind in /etc: server options and token, the systemd drop-in, the sudo rule, the
+# RAPL udev rule and an enabled server. Called once by postinst; without such leftovers
+# it does nothing. Rules of a Git checkout (helper under /usr/local) stay untouched:
+# the application still finds that helper, and its setup replaces them later.
+# LINTASK_MIGRATE_ROOT is for the tests.
+
+ROOT="${LINTASK_MIGRATE_ROOT:-}"
+ETC="$ROOT/etc"
+OLD_UNIT=wintaskmanager-server.service
+NEW_UNIT=lintask-server.service
+SYSTEMD_DIR="$ETC/systemd/system"
+RUNTIME_DIR="$ROOT/run/systemd/system"
+OLD_HELPER=/usr/libexec/wintaskmanager/wintaskmanager-smartctl
+NEW_HELPER=/usr/libexec/lintask/lintask-smartctl
+
+failed=0
+
+migrate_defaults() {
+    old="$ETC/default/wintaskmanager-server"
+    new="$ETC/default/lintask-server"
+    [ -f "$old" ] || return 0
+    # Replaces the default file this package just shipped. The temporary file is never
+    # readable by others: this file can hold the server's token.
+    tmp="$(umask 077; mktemp "$new.XXXXXX")" || return 1
+    if sed -e 's/WINTASKMANAGER/LINTASK/g' -e 's/WinTaskManager/Lintask/g' \
+           -e 's/wintaskmanager/lintask/g' "$old" > "$tmp" \
+       && chmod 600 "$tmp" && mv -f "$tmp" "$new"; then
+        rm -f "$old"
+    else
+        rm -f "$tmp"
+        return 1
+    fi
+}
+
+migrate_dropins() {
+    old="$SYSTEMD_DIR/$OLD_UNIT.d"
+    new="$SYSTEMD_DIR/$NEW_UNIT.d"
+    [ -d "$old" ] && [ ! -e "$new" ] || return 0
+    mv "$old" "$new"
+}
+
+migrate_sudo_rule() {
+    old="$ETC/sudoers.d/wintaskmanager-smartctl"
+    new="$ETC/sudoers.d/lintask-smartctl"
+    [ -f "$old" ] || return 0
+    grep -qF "$OLD_HELPER" "$old" || return 0
+    if [ ! -e "$new" ]; then
+        # sudo ignores files with a dot in their name, so it never reads the unchecked
+        # rule. A rule visudo rejects is not installed: the setup in the application
+        # writes a new one.
+        tmp="$(mktemp "$new.XXXXXX")" || return 1
+        if sed "s|$OLD_HELPER|$NEW_HELPER|g" "$old" > "$tmp" && chmod 0440 "$tmp" \
+           && command -v visudo >/dev/null 2>&1 && visudo -cf "$tmp" >/dev/null 2>&1; then
+            mv -f "$tmp" "$new" || { rm -f "$tmp"; return 1; }
+        else
+            rm -f "$tmp"
+        fi
+    fi
+    # Its helper went away with the old package.
+    rm -f "$old"
+}
+
+migrate_rapl_rule() {
+    old="$ETC/udev/rules.d/99-wintaskmanager-rapl.rules"
+    new="$ETC/udev/rules.d/99-lintask-rapl.rules"
+    [ -f "$old" ] && [ ! -e "$new" ] || return 0
+    mv "$old" "$new" || return 1
+    udevadm control --reload >/dev/null 2>&1 || true
+}
+
+migrate_service() {
+    wants="$SYSTEMD_DIR/multi-user.target.wants/$OLD_UNIT"
+    mask="$SYSTEMD_DIR/$OLD_UNIT"
+    enabled=
+    if [ -L "$wants" ]; then
+        enabled=1
+    fi
+    if [ -n "$enabled" ] || [ -L "$mask" ]; then
+        # The old package's removal masked its unit, and its purge may never come.
+        deb-systemd-helper purge "$OLD_UNIT" >/dev/null 2>&1 || true
+        deb-systemd-helper unmask "$OLD_UNIT" >/dev/null 2>&1 || true
+    fi
+    [ -d "$RUNTIME_DIR" ] && { systemctl --system daemon-reload >/dev/null 2>&1 || true; }
+    [ -n "$enabled" ] || return 0
+    deb-systemd-helper enable "$NEW_UNIT" >/dev/null || return 1
+    if [ -d "$RUNTIME_DIR" ]; then
+        deb-systemd-invoke start "$NEW_UNIT" >/dev/null || return 1
+    fi
+}
+
+for step in migrate_defaults migrate_dropins migrate_sudo_rule migrate_rapl_rule migrate_service; do
+    "$step" || failed=1
+done
+
+exit "$failed"

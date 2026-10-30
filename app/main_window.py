@@ -696,7 +696,7 @@ class MainWindow(QMainWindow):
 
     def _build_ui(self) -> None:
         """Creates everything that shows text; runs again when the language changes."""
-        self.setWindowTitle(tr("Task Manager"))
+        self.setWindowTitle("Lintask")
 
         self.tabs = NavTabWidget()
 

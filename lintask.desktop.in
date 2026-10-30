@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Lintask
+Comment=Task manager for Linux
+Comment[de]=Task-Manager für Linux
+Exec="@APP_DIR@/run.sh"
+Icon=utilities-system-monitor
+Terminal=false
+Categories=System;Monitor;
+StartupNotify=true
+GenericName=System Monitor
+GenericName[de]=Systemüberwachung
+Keywords=Lintask;WinTaskManager;Taskmanager;Task Manager;Taskmgr;CPU;RAM;Processes;Performance;System;Monitor;
+Keywords[de]=Lintask;WinTaskManager;Taskmanager;Task-Manager;Task Manager;Taskmgr;CPU;RAM;Prozesse;Leistung;System;Monitor;

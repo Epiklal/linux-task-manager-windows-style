@@ -6,8 +6,9 @@ import os
 
 from PySide6.QtCore import QSettings
 
-ORG = "WinTaskManager"
+ORG = "Lintask"
 APP = "TaskManager"
+LEGACY_ORG = "WinTaskManager"  # Name of the settings folder before the rename
 
 DEFAULT_THEME = "light"
 DEFAULT_STYLE = "win10"  # "win10" or "win11" window layout / look
@@ -21,7 +22,25 @@ DEFAULT_REMOTE_PORT = 8765
 class Settings:
     def __init__(self):
         self._store = QSettings(ORG, APP)
+        self._migrate_legacy_file()
+        self._store.sync()
         self._restrict_permissions()
+
+    def _migrate_legacy_file(self) -> None:
+        """Take over the settings, including the token, from before the rename. Runs
+        before the new file exists; an existing new file is never overwritten."""
+        path = self._store.fileName()
+        folder = os.path.dirname(path)
+        legacy = os.path.join(os.path.dirname(folder), LEGACY_ORG, os.path.basename(path))
+        if os.path.exists(path) or not os.path.exists(legacy):
+            return
+        try:
+            os.makedirs(folder, exist_ok=True)
+            os.replace(legacy, path)
+            os.chmod(path, 0o600)
+            os.rmdir(os.path.dirname(legacy))
+        except OSError:
+            pass
 
     def _restrict_permissions(self) -> None:
         """The file holds the remote-server token: readable by this user only (0600).

@@ -1,20 +1,20 @@
 #!/bin/sh
 # Sets up PySide6/psutil for the task manager. Called by postinst, but can be
 # repeated by hand at any time:
-#     sudo /usr/libexec/wintaskmanager/setup-venv
+#     sudo /usr/libexec/lintask/setup-venv
 #
 # Debian ships PySide6 as system packages (python3-pyside6.*), Ubuntu and
 # Linux Mint don't. Without them, a virtual environment is created under
-# /opt/wintaskmanager/venv and pip downloads PySide6-Essentials into it. The
-# launcher /usr/bin/wintaskmanager picks the right Python environment by itself.
+# /opt/lintask/venv and pip downloads PySide6-Essentials into it. The
+# launcher /usr/bin/lintask picks the right Python environment by itself.
 set -e
 
-VENV=/opt/wintaskmanager/venv
+VENV=/opt/lintask/venv
 PYTHON=/usr/bin/python3
 CHECK='import PySide6, PySide6.QtCore, PySide6.QtGui, PySide6.QtWidgets, psutil
 import sys; sys.exit(PySide6.__version_info__ < (6, 6))'
 
-say() { echo "wintaskmanager: $*"; }
+say() { echo "lintask: $*"; }
 case "${LANGUAGE:-${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}}" in
     de*) GERMAN=1 ;;
     *) GERMAN= ;;
@@ -37,7 +37,7 @@ msg "Keine PySide6-Systempakete gefunden (normal auf Ubuntu/Linux Mint)." \
 msg "Lege virtuelle Umgebung $VENV an und lade PySide6 (~100 MB) herunter ..." \
     "Creating virtual environment $VENV and downloading PySide6 (~100 MB) ..."
 rm -rf "$VENV"
-mkdir -p /opt/wintaskmanager
+mkdir -p /opt/lintask
 if ! "$PYTHON" -m venv --system-site-packages "$VENV"; then
     msg "FEHLER: 'python3 -m venv' schlug fehl. Fehlt das Paket python3-venv?" \
         "ERROR: 'python3 -m venv' failed. Is the package python3-venv missing?" >&2
@@ -57,7 +57,7 @@ if ! "$VENV/bin/python" -m pip install --no-cache-dir "PySide6-Essentials>=6.6,<
         echo "  This needs an internet connection to pypi.org (proxy? offline?)." >&2
         echo "  Afterwards simply repeat the setup:" >&2
     fi
-    echo "      sudo /usr/libexec/wintaskmanager/setup-venv" >&2
+    echo "      sudo /usr/libexec/lintask/setup-venv" >&2
     echo >&2
     rm -rf "$VENV"
     exit 1
