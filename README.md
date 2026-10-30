@@ -65,8 +65,10 @@ The screenshots show the German interface.
 
 - **Processes** with Windows-style grouping, heat map, overall usage in the column
   headers, search, end task, run new task and drag & drop to start programs.
-- **Memory** overview: what really uses your RAM, hints on programs holding a lot of it,
-  and ending a program or moving it to swap on request. Nothing happens automatically.
+- **Memory** graphs for RAM and swap, what really uses your RAM, hints on programs holding
+  a lot of it, and ending a program or moving it to swap on request. Nothing happens
+  automatically. A data view lists everything else: kernel figures, swap devices, every
+  module and the module temperatures.
 - **Performance** graphs for CPU (overall or per logical processor), memory, every
   physical disk, network (auto-scaled, send/receive) and GPU (selectable engines,
   dedicated and shared memory).

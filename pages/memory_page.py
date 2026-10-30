@@ -1,7 +1,9 @@
 """Memory tab - what uses RAM, suggestions, and targeted actions on a single program."""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from collections import deque
+
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -13,10 +15,10 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QMessageBox,
-    QProgressBar,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -39,10 +41,16 @@ from app.memory_info import (
     build_hints,
     format_bytes,
     is_tight,
+    memory_data_sections,
     overview_from_remote,
     pressure_level,
+    read_meminfo,
+    read_overview,
+    read_swaps,
     rows_from_remote,
 )
+from app.themes import WIN10_CHART_COLORS
+from widgets.live_chart import LiveChart
 
 COLUMNS = [N_("Program"), N_("User"), N_("Processes"), N_("RAM"), N_("Swap"), N_("Note")]
 _NUMBER_COLUMNS = (2, 3, 4)
@@ -60,6 +68,14 @@ _REMOTE_ACTION_HINT = N_(
 )
 # Below this, a page-out did not achieve anything the user would notice.
 _NOTICEABLE_BYTES = 16 * MIB
+
+_CHART_POINTS = 60
+_CHART_HEIGHT = 110
+_CHART_INTERVAL_MS = 1000
+
+
+def _empty_history() -> deque:
+    return deque([0.0] * _CHART_POINTS, maxlen=_CHART_POINTS)
 
 
 def _process_count(count: int) -> str:
@@ -101,11 +117,19 @@ class MemoryPage(QWidget):
         super().__init__(parent)
         self.settings = settings
 
-        self.usage_label = QLabel("")
-        self.usage_bar = QProgressBar()
-        self.usage_bar.setRange(0, 100)
-        self.usage_bar.setTextVisible(False)
-        self.usage_bar.setFixedHeight(10)
+        self._chart_colors = dict(WIN10_CHART_COLORS)
+        self.memory_chart_label = QLabel("")
+        self.memory_chart = self._new_chart(self._chart_colors["memory"])
+        self.swap_chart_label = QLabel("")
+        self.swap_chart = self._new_chart(self._chart_colors["disk"])
+
+        charts = QGridLayout()
+        charts.addWidget(self.memory_chart_label, 0, 0)
+        charts.addWidget(self.swap_chart_label, 0, 1)
+        charts.addWidget(self.memory_chart, 1, 0)
+        charts.addWidget(self.swap_chart, 1, 1)
+        charts.setColumnStretch(0, 1)
+        charts.setColumnStretch(1, 1)
 
         tiles = QGridLayout()
         self.in_use_value = self._add_tile(tiles, 0, tr("In use"))
@@ -158,21 +182,46 @@ class MemoryPage(QWidget):
         cache_layout.addWidget(self.cache_warning)
         cache_layout.addWidget(self.drop_btn, 0, Qt.AlignLeft)
 
+        programs_tab = QWidget()
+        programs_layout = QVBoxLayout(programs_tab)
+        programs_layout.addWidget(self.hints_label)
+        programs_layout.addLayout(action_bar)
+        programs_layout.addWidget(self.table, 1)
+        programs_layout.addWidget(self.status_label)
+        programs_layout.addWidget(self.cache_box)
+
+        self.data_table = QTableWidget(0, 2)
+        self.data_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.data_table.setSelectionMode(QAbstractItemView.NoSelection)
+        self.data_table.setFocusPolicy(Qt.NoFocus)
+        self.data_table.horizontalHeader().setVisible(False)
+        self.data_table.horizontalHeader().setStretchLastSection(True)
+        self.data_table.verticalHeader().setVisible(False)
+        self.data_table.setColumnWidth(0, 280)
+
+        self.tabs = QTabWidget()
+        self.tabs.addTab(programs_tab, tr("Programs"))
+        self.tabs.addTab(self.data_table, tr("Data"))
+        self.tabs.currentChanged.connect(self._update_data_table)
+
         layout = QVBoxLayout(self)
-        layout.addWidget(self.usage_label)
-        layout.addWidget(self.usage_bar)
+        layout.addLayout(charts)
         layout.addLayout(tiles)
         layout.addWidget(self.rating_label)
-        layout.addWidget(self.hints_label)
-        layout.addLayout(action_bar)
-        layout.addWidget(self.table, 1)
-        layout.addWidget(self.status_label)
-        layout.addWidget(self.cache_box)
+        layout.addWidget(self.tabs, 1)
 
         self._rows: list[ProgramRow] = []
         self._selected_key: tuple[str, str] | None = None
         self._overview: MemoryOverview | None = None
         self._remote = False
+        self._remote_sensors: list[dict] | None = None
+        self._hardware = None
+        self._ram_sensors: list[dict] = []
+        self._data_labels: list[tuple[str, str | None]] = []
+        self._memory_history = _empty_history()
+        self._swap_history = _empty_history()
+        self.memory_chart.set_data(self._memory_history)
+        self.swap_chart.set_data(self._swap_history)
         self._action_worker = None
         self._action_slot = None
 
@@ -181,7 +230,27 @@ class MemoryPage(QWidget):
 
         self.worker = MemoryWorker(parent=self)
         self.worker.snapshotReady.connect(self._on_snapshot)
+        self.worker.hardwareReady.connect(self._on_hardware)
         self.worker.start()
+
+        # Runs while the tab is hidden too, so the graphs have a history when it is opened.
+        self.chart_timer = QTimer(self)
+        self.chart_timer.timeout.connect(self._on_chart_timer)
+        self.chart_timer.start(_CHART_INTERVAL_MS)
+        self._add_to_charts(read_overview())
+
+    @staticmethod
+    def _new_chart(color) -> LiveChart:
+        chart = LiveChart(max_points=_CHART_POINTS, max_value=100.0, line_color=color)
+        chart.setFixedHeight(_CHART_HEIGHT)
+        return chart
+
+    def set_theme(self, dark: bool, chart_background=None, chart_colors=None) -> None:
+        self._chart_colors = dict(chart_colors or WIN10_CHART_COLORS)
+        self.memory_chart.set_line_color(self._chart_colors["memory"])
+        self.swap_chart.set_line_color(self._chart_colors["disk"])
+        self.memory_chart.set_theme(dark, chart_background)
+        self.swap_chart.set_theme(dark, chart_background)
 
     def _note_column_width(self) -> int:
         notes = (tr("this program"), tr("needed by the desktop"), tr("other user"),
@@ -223,24 +292,75 @@ class MemoryPage(QWidget):
     def _on_snapshot(self, snapshot: MemorySnapshot) -> None:
         self.worker.mark_consumed()
         if not self._remote:
+            self._ram_sensors = snapshot.ram_sensors
             self._show_snapshot(snapshot)
+
+    def _on_hardware(self, hardware) -> None:
+        self._hardware = hardware
+        self._update_data_table()
+
+    def _on_chart_timer(self) -> None:
+        if self._remote:
+            return
+        overview = read_overview()
+        self._add_to_charts(overview)
+        if self.isVisible():
+            self._overview = overview
+            self._show_overview(overview)
+            self._update_data_table()
+
+    def _clear_charts(self) -> None:
+        self._memory_history = _empty_history()
+        self._swap_history = _empty_history()
+        self.memory_chart.set_data(self._memory_history)
+        self.swap_chart.set_data(self._swap_history)
+
+    def _add_to_charts(self, overview: MemoryOverview) -> None:
+        percent = overview.used * 100 / overview.total if overview.total else 0.0
+        self._memory_history.append(percent)
+        self.memory_chart.set_data(self._memory_history)
+        self.memory_chart_label.setText(tr(
+            "Memory: {used} of {total} ({percent} %)", used=format_bytes(overview.used),
+            total=format_bytes(overview.total), percent=round(percent)))
+
+        if overview.swap_total:
+            swap_used = overview.swap_used or 0
+            swap_percent = swap_used * 100 / overview.swap_total
+            self._swap_history.append(swap_percent)
+            self.swap_chart.set_overlay_text("")
+            self.swap_chart_label.setText(tr(
+                "Swap: {used} of {total} ({percent} %)", used=format_bytes(swap_used),
+                total=format_bytes(overview.swap_total), percent=round(swap_percent)))
+        else:
+            self._swap_history.append(0.0)
+            self.swap_chart.set_overlay_text(
+                tr("Unknown") if overview.swap_total is None else tr("Not set up"))
+            self.swap_chart_label.setText(tr("Swap"))
+        self.swap_chart.set_data(self._swap_history)
 
     def set_remote_data(self, payload: dict | None) -> None:
         was_remote = self._remote
         self._remote = payload is not None
         self.cache_box.setVisible(not self._remote)
+        if self._remote != was_remote:
+            self._clear_charts()
         if payload is None:
             if was_remote:
+                self._remote_sensors = None
+                self._ram_sensors = []
                 self.worker.request_refresh()
                 self._update_actions()
             return
         system, processes = payload.get("system"), payload.get("processes")
+        self._remote_sensors = payload.get("ram_sensors")
         if not system or processes is None:
             self._update_actions()
             return
         overview = overview_from_remote(system)
         rows = rows_from_remote(processes)
+        self._add_to_charts(overview)
         self._show_snapshot(MemorySnapshot(overview, rows, build_hints(rows, overview)))
+        self._update_data_table()
 
     def _show_snapshot(self, snapshot: MemorySnapshot) -> None:
         self._overview = snapshot.overview
@@ -249,13 +369,55 @@ class MemoryPage(QWidget):
         self._show_rows(snapshot.rows)
         self._update_actions()
 
+    def _update_data_table(self) -> None:
+        if self._overview is None or self.tabs.currentWidget() is not self.data_table:
+            return
+        if self._remote:
+            # An older server does not send this field, which says nothing about its sensors.
+            sections = memory_data_sections(self._overview, {}, [], None, self._remote_sensors,
+                                            remote=True)
+        else:
+            sections = memory_data_sections(self._overview, read_meminfo(), read_swaps(),
+                                            self._hardware, self._ram_sensors)
+        self._show_data(sections)
+
+    def _show_data(self, sections: list[tuple[str, list[tuple[str, str]]]]) -> None:
+        rows: list[tuple[str, str | None]] = []
+        for title, entries in sections:
+            rows.append((title, None))
+            rows.extend(entries)
+        labels = [(label, None if value is None else "") for label, value in rows]
+        # With the same rows only the values change, so the scroll position stays.
+        rebuild = labels != self._data_labels
+        table = self.data_table
+        table.setUpdatesEnabled(False)
+        if rebuild:
+            self._data_labels = labels
+            table.clearSpans()
+            table.setRowCount(len(rows))
+            bold = QFont(table.font())
+            bold.setBold(True)
+        for index, (label, value) in enumerate(rows):
+            if value is None:
+                if rebuild:
+                    item = QTableWidgetItem(label)
+                    item.setFont(bold)
+                    table.setItem(index, 0, item)
+                    table.setItem(index, 1, None)
+                    table.setSpan(index, 0, 1, 2)
+                continue
+            if rebuild:
+                table.setItem(index, 0, QTableWidgetItem(label))
+            item = table.item(index, 1)
+            if item is None:
+                table.setItem(index, 1, QTableWidgetItem(value))
+            elif item.text() != value:
+                item.setText(value)
+        table.setUpdatesEnabled(True)
+
     def _show_overview(self, overview: MemoryOverview) -> None:
-        used, total = format_bytes(overview.used), format_bytes(overview.total)
+        used = format_bytes(overview.used)
         available = format_bytes(overview.available)
-        percent = round(overview.used * 100 / overview.total) if overview.total else 0
-        self.usage_label.setText(tr("{used} of {total} in use ({percent} %)",
-                                    used=used, total=total, percent=percent))
-        self.usage_bar.setValue(percent)
         self.in_use_value.setText(used)
         self.available_value.setText(available)
         self.cache_value.setText(format_bytes(overview.cached))
@@ -471,7 +633,9 @@ class MemoryPage(QWidget):
                                  after=format_bytes(result.after_bytes)))
 
     def shutdown(self) -> None:
+        self.chart_timer.stop()
         self._stop_action_worker()
         self.worker.snapshotReady.disconnect(self._on_snapshot)
+        self.worker.hardwareReady.disconnect(self._on_hardware)
         self.worker.stop()
         self.worker.deleteLater()

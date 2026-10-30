@@ -873,6 +873,7 @@ class MainWindow(QMainWindow):
         self.processes_page.place_search_box(
             self.page_frames[0].header_layout if win11 else None)
         self.performance_page.set_theme(colors["dark"], colors["chart_bg"], colors["charts"])
+        self.memory_page.set_theme(colors["dark"], colors["chart_bg"], colors["charts"])
         self.processes_page.set_theme(colors, win11)
 
     def _apply_custom_qss(self, qss: str) -> None:

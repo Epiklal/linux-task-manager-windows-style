@@ -1,9 +1,11 @@
 """The memory tab: rating, hints and the workers behind its actions. No real helper or sudo
 is involved; the only process that gets ended is a child started by the test itself.
 """
+import glob
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest import mock
@@ -14,14 +16,17 @@ import psutil  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
 from app import memory_info  # noqa: E402
-from app.i18n import tr  # noqa: E402
+from app.i18n import format_decimal, tr  # noqa: E402
 from app.memory_info import (  # noqa: E402
     ERROR_DROP_REFUSED, ERROR_HELPER_FAILED, ERROR_HELPER_OLD, ERROR_HELPER_TIMEOUT,
     ERROR_NOT_SET_UP, ERROR_PAGEOUT_KERNEL, ERROR_PAGEOUT_NO_PYTHON, ERROR_PAGEOUT_REFUSED,
-    GIB, MIB, ActivityTracker, DropCachesWorker, EndProgramWorker, EndResult, MemoryOverview,
-    MemorySnapshot, PageOutResult, PageOutWorker, ProgramRow, build_hints, is_essential, is_tight,
-    overview_from_remote, parse_pressure, parse_refused, pressure_level, rows_from_remote,
+    GIB, MIB, ActivityTracker, DropCachesWorker, EndProgramWorker, EndResult, MemoryHardware,
+    MemoryModule, MemoryOverview, MemorySnapshot, PageOutResult, PageOutWorker, ProgramRow,
+    SwapDevice, build_hints, format_bytes, is_essential, is_tight, memory_data_sections,
+    overview_from_remote, parse_dmi_memory, parse_meminfo, parse_pressure, parse_refused,
+    parse_swaps, pressure_level, read_memory_hardware, rows_from_remote,
 )
+from app.system_info import list_hardware_sensors, list_ram_sensors  # noqa: E402
 from pages import memory_page  # noqa: E402
 from pages.memory_page import MemoryPage  # noqa: E402
 
@@ -360,6 +365,217 @@ class TestEndProgramWorker(unittest.TestCase):
         self.assertEqual((result.ended, result.denied, result.survivors), (0, 0, ()))
 
 
+class TestMemoryFiles(unittest.TestCase):
+    def test_meminfo_is_in_bytes_and_plain_counters_stay_as_they_are(self):
+        values = parse_meminfo("MemTotal:    16 kB\nHugePages_Total:   3\nbroken\nOdd: abc kB\n")
+        self.assertEqual(values, {"MemTotal": 16 * 1024, "HugePages_Total": 3})
+
+    def test_swaps_are_in_bytes_and_keep_spaces_in_the_name(self):
+        text = ("Filename\tType\tSize\tUsed\tPriority\n"
+                "/my\\040swap file 1024 512 -2\n"
+                "/dev/sda3 partition 2048 0 -3\n"
+                "broken line\n"
+                "/dev/sdb1 partition abc 0 -4\n")
+        self.assertEqual(parse_swaps(text), [
+            SwapDevice("/my swap", "file", 1024 * 1024, 512 * 1024),
+            SwapDevice("/dev/sda3", "partition", 2048 * 1024, 0),
+        ])
+
+    def test_empty_files_mean_no_data(self):
+        self.assertEqual(parse_meminfo(""), {})
+        self.assertEqual(parse_swaps(""), [])
+
+
+DMI_TEXT = """\
+# dmidecode 3.6
+
+Handle 0x0010, DMI type 16, 23 bytes
+Physical Memory Array
+\tLocation: System Board Or Motherboard
+\tUse: System Memory
+\tError Correction Type: None
+\tMaximum Capacity: 128 GB
+\tNumber Of Devices: 2
+
+Handle 0x0020, DMI type 16, 23 bytes
+Physical Memory Array
+\tUse: Flash Memory
+\tError Correction Type: Unknown
+\tMaximum Capacity: 16 MB
+
+Handle 0x0011, DMI type 17, 92 bytes
+Memory Device
+\tArray Handle: 0x0010
+\tSize: 16 GB
+\tForm Factor: DIMM
+\tLocator: DIMM_A1
+\tBank Locator: BANK 0
+\tType: DDR4
+\tType Detail: Synchronous Unbuffered
+\tSpeed: 3200 MT/s
+\tManufacturer: 00000000
+\tSerial Number: SECRET123
+\tPart Number: Not Specified
+\tRank: 2
+\tConfigured Memory Speed: 3000 MT/s
+\tConfigured Voltage: 1.35 V
+\tMemory Operating Mode Capability:
+\t\tVolatile memory
+
+Handle 0x0012, DMI type 17, 92 bytes
+Memory Device
+\tArray Handle: 0x0010
+\tSize: No Module Installed
+\tLocator: DIMM_A2
+\tType: Unknown
+
+Handle 0x0021, DMI type 17, 92 bytes
+Memory Device
+\tArray Handle: 0x0020
+\tSize: 16 MB
+\tLocator: FLASH
+"""
+
+
+class TestDmiMemory(unittest.TestCase):
+    def test_reads_the_array_and_its_slots(self):
+        hardware = parse_dmi_memory(DMI_TEXT)
+        self.assertEqual(hardware.max_capacity, 128 * GIB)
+        self.assertEqual(hardware.error_correction, "None")
+        # The flash chip has an array of its own and is no memory slot.
+        self.assertEqual(hardware.slots_total, 2)
+        self.assertEqual([module.locator for module in hardware.modules], ["DIMM_A1"])
+
+    def test_reads_a_module_and_drops_placeholders(self):
+        module = parse_dmi_memory(DMI_TEXT).modules[0]
+        self.assertEqual(module.size, 16 * GIB)
+        self.assertEqual((module.type, module.form_factor), ("DDR4", "DIMM"))
+        self.assertEqual((module.speed, module.configured_speed), ("3200 MT/s", "3000 MT/s"))
+        self.assertEqual((module.rank, module.voltage), ("2", "1.35 V"))
+        self.assertEqual((module.manufacturer, module.part_number), ("", ""))
+
+    def test_the_serial_number_is_not_kept(self):
+        self.assertNotIn("SECRET123", repr(parse_dmi_memory(DMI_TEXT)))
+
+    def test_boards_without_array_data_still_have_memory(self):
+        text = "Handle 0x1, DMI type 17, 92 bytes\nMemory Device\n\tSize: 8192 MB\n\tLocator: A\n"
+        hardware = parse_dmi_memory(text)
+        self.assertEqual((hardware.max_capacity, hardware.error_correction), (None, ""))
+        self.assertEqual([module.size for module in hardware.modules], [8 * GIB])
+
+    def test_no_readable_data_means_no_hardware(self):
+        for text in (None, "", "# dmidecode 3.6\n"):
+            with self.subTest(text=text), mock.patch.object(memory_info, "read_dmi_memory",
+                                                            return_value=text):
+                self.assertIsNone(read_memory_hardware())
+        with mock.patch.object(memory_info, "read_dmi_memory", return_value=DMI_TEXT):
+            self.assertEqual(read_memory_hardware().slots_total, 2)
+
+
+class TestRamSensors(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        chips = {"hwmon0": ("jc42", {"temp1_input": "41500"}),
+                 "hwmon1": ("SPD5118", {"temp1_input": "39000"}),
+                 "hwmon2": ("nct6687", {"temp1_input": "50000", "temp1_label": "CPU"})}
+        for folder, (chip, files) in chips.items():
+            os.mkdir(os.path.join(directory.name, folder))
+            for name, content in {"name": chip, **files}.items():
+                with open(os.path.join(directory.name, folder, name), "w") as handle:
+                    handle.write(content)
+        real_glob = glob.glob
+        patcher = mock.patch("glob.glob", side_effect=lambda pattern: real_glob(
+            pattern.replace("/sys/class/hwmon", directory.name)))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_the_memory_tab_gets_the_sensors_on_the_modules(self):
+        sensors = list_ram_sensors()
+        self.assertEqual([sensor["name"] for sensor in sensors],
+                         ["jc42: temp1", "SPD5118: temp1"])
+        self.assertEqual((sensors[0]["value"], sensors[0]["unit"]), (41.5, "°C"))
+
+    def test_the_sensors_tab_no_longer_gets_them(self):
+        names = [sensor["name"] for sensor in list_hardware_sensors()]
+        self.assertIn("nct6687: CPU", names)
+        self.assertFalse([name for name in names if name.lower().startswith(("jc42", "spd"))])
+
+
+class TestMemoryData(unittest.TestCase):
+    MEMINFO = {"MemFree": GIB, "Buffers": MIB, "Slab": 2 * MIB, "SwapCached": 3 * MIB,
+               "HugePages_Total": 4, "HugePages_Free": 1}
+
+    @staticmethod
+    def sections(data=None, meminfo=None, swaps=(), hardware=None, sensors=None, remote=False):
+        return dict(memory_data_sections(data or overview(), meminfo or {}, list(swaps), hardware,
+                                         sensors, remote=remote))
+
+    def test_usage_lists_the_overview_and_the_kernel_counters(self):
+        sections = self.sections(meminfo=self.MEMINFO)
+        usage = dict(sections[tr("Usage")])
+        self.assertEqual(usage[tr("Total")], format_bytes(16 * GIB))
+        self.assertEqual(usage[tr("Free")], format_bytes(GIB))
+        kernel = dict(sections[tr("Kernel")])
+        self.assertEqual(kernel[tr("Kernel caches (slab)")], format_bytes(2 * MIB))
+        self.assertEqual(kernel[tr("Huge pages")], tr("{used} of {total}", used=3, total=4))
+
+    def test_without_kernel_counters_the_section_is_left_out(self):
+        self.assertNotIn(tr("Kernel"), self.sections())
+
+    def test_pressure_is_only_listed_if_known(self):
+        label = tr("Memory pressure (1 min)")
+        self.assertNotIn(label, dict(self.sections()[tr("Usage")]))
+        usage = dict(self.sections(data=overview(some=1.5))[tr("Usage")])
+        self.assertEqual(usage[label], f"{format_decimal(1.5)} %")
+
+    def test_swap_states(self):
+        for total, text in ((None, tr("Unknown")), (0, tr("Not set up"))):
+            with self.subTest(total=total):
+                swap = self.sections(data=overview(swap_total=total))[tr("Swap")]
+                self.assertEqual(swap, [(tr("Total"), text)])
+        device = SwapDevice("/swapfile", "file", 4 * GIB, GIB)
+        swap = dict(self.sections(meminfo=self.MEMINFO, swaps=[device])[tr("Swap")])
+        self.assertEqual(swap[tr("Total")], format_bytes(4 * GIB))
+        self.assertEqual(swap[tr("Also still in memory")], format_bytes(3 * MIB))
+        self.assertEqual(swap["/swapfile"], tr("{used} of {total}", used=format_bytes(GIB),
+                                               total=format_bytes(4 * GIB)))
+
+    def test_hardware_lists_every_module(self):
+        hardware = MemoryHardware(
+            max_capacity=64 * GIB, error_correction="None", slots_total=4,
+            modules=(MemoryModule("DIMM_A1", 16 * GIB, type="DDR4", form_factor="DIMM"),
+                     MemoryModule("", 8 * GIB)))
+        sections = self.sections(hardware=hardware)
+        rows = dict(sections[tr("Hardware")])
+        self.assertEqual(rows[tr("Slots in use")], tr("{used} of {total}", used=2, total=4))
+        self.assertEqual(rows[tr("Error correction")], tr("None"))
+        first = dict(sections[tr("Module {number}: {slot}", number=1, slot="DIMM_A1")])
+        self.assertEqual(first[tr("Type")], "DDR4 DIMM")
+        # Fields that are not known get no empty row.
+        self.assertNotIn(tr("Manufacturer"), first)
+        self.assertEqual(sections[tr("Module {number}", number=2)],
+                         [(tr("Size"), format_bytes(8 * GIB))])
+
+    def test_without_hardware_the_reason_is_shown(self):
+        local = dict(self.sections()[tr("Hardware")])
+        self.assertEqual(local[tr("Modules")],
+                         tr("Needs \"Set up hardware data with sudo\" under Settings"))
+        remote = dict(self.sections(remote=True)[tr("Hardware")])
+        self.assertEqual(remote[tr("Modules")], tr("Only shown for this PC"))
+
+    def test_temperature_states(self):
+        self.assertEqual(self.sections(sensors=None)[tr("Temperature")],
+                         [(tr("Temperature"), tr("Unknown"))])
+        self.assertEqual(self.sections(sensors=[])[tr("Temperature")],
+                         [(tr("Temperature"), tr("No sensor found"))])
+        sensors = [{"unit": "°C", "value": 41.5}, {"unit": "V", "value": 1.2},
+                   {"unit": "°C", "value": 40.0}]
+        self.assertEqual(self.sections(sensors=sensors)[tr("Temperature")],
+                         [(tr("Sensor {number}", number=1), f"{format_decimal(41.5)} °C"),
+                          (tr("Sensor {number}", number=2), f"{format_decimal(40.0)} °C")])
+
+
 class TestMemoryPage(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -497,6 +713,104 @@ class TestMemoryPage(unittest.TestCase):
         self.page.set_remote_data(None)
         self.assertFalse(self.page.cache_box.isHidden())
         self.assertEqual(self.buttons(), (True, True))
+
+    def data_rows(self):
+        """The rows of the data table as {label: value}; section titles have the value None."""
+        table = self.page.data_table
+        rows = {}
+        for index in range(table.rowCount()):
+            value = table.item(index, 1)
+            rows[table.item(index, 0).text()] = value.text() if value else None
+        return rows
+
+    def open_data_tab(self):
+        with mock.patch.object(memory_page, "read_meminfo", return_value={"Buffers": GIB}), \
+                mock.patch.object(memory_page, "read_swaps", return_value=[]):
+            self.page.tabs.setCurrentWidget(self.page.data_table)
+
+    def test_both_graphs_show_the_current_share(self):
+        self.page._add_to_charts(MemoryOverview(
+            total=16 * GIB, used=4 * GIB, available=12 * GIB, cached=0,
+            swap_total=4 * GIB, swap_used=GIB))
+        self.assertEqual(self.page._memory_history[-1], 25.0)
+        self.assertEqual(self.page._swap_history[-1], 25.0)
+        self.assertEqual(self.page.memory_chart_label.text(), tr(
+            "Memory: {used} of {total} ({percent} %)", used=format_bytes(4 * GIB),
+            total=format_bytes(16 * GIB), percent=25))
+        self.assertEqual(self.page.swap_chart_label.text(), tr(
+            "Swap: {used} of {total} ({percent} %)", used=format_bytes(GIB),
+            total=format_bytes(4 * GIB), percent=25))
+
+    def test_the_swap_graph_says_why_it_is_empty(self):
+        for total, text in ((0, tr("Not set up")), (None, tr("Unknown"))):
+            with self.subTest(total=total), \
+                    mock.patch.object(self.page.swap_chart, "set_overlay_text") as overlay:
+                self.page._add_to_charts(overview(swap_total=total))
+                overlay.assert_called_once_with(text)
+                self.assertEqual(self.page.swap_chart_label.text(), tr("Swap"))
+                self.assertEqual(self.page._swap_history[-1], 0.0)
+
+    def test_no_total_does_not_divide_by_zero(self):
+        self.page._add_to_charts(overview(total=0, available=0))
+        self.assertEqual(self.page._memory_history[-1], 0.0)
+
+    def test_the_data_tab_is_filled_when_it_is_opened(self):
+        self.show(program())
+        self.assertEqual(self.page.data_table.rowCount(), 0)
+        self.open_data_tab()
+        rows = self.data_rows()
+        self.assertIsNone(rows[tr("Usage")])
+        self.assertIsNone(rows[tr("Hardware")])
+        self.assertEqual(rows[tr("Buffers")], format_bytes(GIB))
+        self.assertEqual(rows[tr("Temperature")], tr("No sensor found"))
+
+    def test_the_data_tab_shows_sensors_and_modules_when_they_arrive(self):
+        self.page._on_snapshot(MemorySnapshot(overview(), [], [],
+                                              [{"unit": "°C", "value": 41.5}]))
+        self.open_data_tab()
+        self.assertEqual(self.data_rows()[tr("Sensor {number}", number=1)],
+                         f"{format_decimal(41.5)} °C")
+        with mock.patch.object(memory_page, "read_meminfo", return_value={}), \
+                mock.patch.object(memory_page, "read_swaps", return_value=[]):
+            self.page._on_hardware(MemoryHardware(slots_total=2, modules=(
+                MemoryModule("DIMM_A1", 16 * GIB),)))
+        rows = self.data_rows()
+        self.assertEqual(rows[tr("Slots in use")], tr("{used} of {total}", used=1, total=2))
+        self.assertIn(tr("Module {number}: {slot}", number=1, slot="DIMM_A1"), rows)
+
+    def test_a_new_value_keeps_the_rows_and_with_them_the_scroll_position(self):
+        self.show(program())
+        self.open_data_tab()
+        table = self.page.data_table
+        item = table.item(1, 1)
+        self.show(program(), data=overview(available=4 * GIB))
+        self.open_data_tab()
+        self.page._update_data_table()
+        self.assertIs(table.item(1, 1), item)
+
+    def test_the_remote_data_tab_only_shows_what_the_server_sent(self):
+        self.page.tabs.setCurrentWidget(self.page.data_table)
+        payload = {"system": {"mem_total_gb": 16, "mem_available_gb": 8}, "processes": [],
+                   "ram_sensors": [{"unit": "°C", "value": 30.0}]}
+        self.page.set_remote_data(payload)
+        rows = self.data_rows()
+        self.assertEqual(rows[tr("Modules")], tr("Only shown for this PC"))
+        self.assertEqual(rows[tr("Sensor {number}", number=1)], f"{format_decimal(30.0)} °C")
+
+        # A server from before this field knows nothing about its sensors, which is not "none".
+        del payload["ram_sensors"]
+        self.page.set_remote_data(payload)
+        self.assertEqual(self.data_rows()[tr("Temperature")], tr("Unknown"))
+
+    def test_switching_to_a_server_starts_the_graphs_anew(self):
+        self.page._add_to_charts(overview())
+        self.page.set_remote_data({"system": {"mem_total_gb": 16, "mem_available_gb": 12},
+                                   "processes": []})
+        self.assertEqual(list(self.page._memory_history)[:-1], [0.0] * 59)
+        self.assertEqual(self.page._memory_history[-1], 25.0)
+        # The timer reads this PC, so it must not draw into the server's graph.
+        self.page._on_chart_timer()
+        self.assertEqual(list(self.page._memory_history)[-2:], [0.0, 25.0])
 
 
 if __name__ == "__main__":

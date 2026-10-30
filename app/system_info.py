@@ -831,8 +831,8 @@ def get_cpu_temperature() -> float | None:
     return None
 
 
-def get_ram_speed_mhz() -> int | None:
-    """Configured DIMM speed via the restricted hardware helper when available."""
+def read_dmi_memory() -> str | None:
+    """Output of "dmidecode -t memory" via the restricted hardware helper when available."""
     commands = []
     helper = helper_path()
     if os.path.exists(helper):
@@ -840,17 +840,19 @@ def get_ram_speed_mhz() -> int | None:
     dmidecode = shutil.which("dmidecode")
     if dmidecode:
         commands.append([dmidecode, "-t", "memory"])
-    if not commands:
-        return None
-    out = None
     for command in commands:
         try:
-            out = subprocess.check_output(
+            return subprocess.check_output(
                 command, text=True, timeout=2, stderr=subprocess.DEVNULL,
             )
-            break
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
             continue
+    return None
+
+
+def get_ram_speed_mhz() -> int | None:
+    """Configured DIMM speed via the restricted hardware helper when available."""
+    out = read_dmi_memory()
     if out is None:
         return None
     configured_speeds = []
@@ -869,6 +871,11 @@ def get_ram_speed_mhz() -> int | None:
     return max(speeds) if speeds else None
 
 
+def _is_ram_chip(chip: str) -> bool:
+    """Sensor chips that sit on the memory modules."""
+    return chip.lower().startswith(("jc42", "spd"))
+
+
 def get_ram_temperature() -> tuple[float | None, int]:
     """Return average temperature and detected DIMM sensor count (JC42/SPD)."""
     try:
@@ -878,7 +885,7 @@ def get_ram_temperature() -> tuple[float | None, int]:
     values = [
         entry.current
         for chip, entries in temperatures.items()
-        if chip.lower().startswith(("jc42", "spd"))
+        if _is_ram_chip(chip)
         for entry in entries
         if entry.current is not None
     ]
@@ -1178,12 +1185,13 @@ def _sensor_value(filename: str, value: float) -> tuple[float, str]:
     return value, ""
 
 
-def list_hardware_sensors() -> list[dict[str, str | float]]:
-    """Read every available Linux hardware sensor endpoint without root access."""
+def _hwmon_sensors(ram: bool) -> list[dict[str, str | float]]:
+    """The hwmon sensors on the memory modules (ram=True) or on everything else."""
     sensors: list[dict[str, str | float]] = []
-
     for hwmon_path in sorted(glob.glob("/sys/class/hwmon/hwmon*")):
         chip = _read_sysfs_str(f"{hwmon_path}/name") or os.path.basename(hwmon_path)
+        if _is_ram_chip(chip) != ram:
+            continue
         for input_path in sorted(glob.glob(f"{hwmon_path}/*_input")):
             value = _read_number(input_path)
             if value is None:
@@ -1196,6 +1204,17 @@ def list_hardware_sensors() -> list[dict[str, str | float]]:
                 "category": N_("Hardware monitor"), "name": f"{chip}: {label}",
                 "value": scaled, "unit": unit, "source": input_path,
             })
+    return sensors
+
+
+def list_ram_sensors() -> list[dict[str, str | float]]:
+    """The sensors on the memory modules, which the memory tab shows."""
+    return _hwmon_sensors(ram=True)
+
+
+def list_hardware_sensors() -> list[dict[str, str | float]]:
+    """Read every Linux hardware sensor endpoint without root access, except the memory modules."""
+    sensors = _hwmon_sensors(ram=False)
 
     for zone_path in sorted(glob.glob("/sys/class/thermal/thermal_zone*")):
         value = _read_number(f"{zone_path}/temp")
